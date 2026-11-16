@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -94,7 +94,9 @@ class InviteLandingScreen extends StatelessWidget {
     final ok = token.isNotEmpty;
     return AuthLayout(
       title: ok ? "You're invited" : 'This link is incomplete',
-      subtitle: ok ? 'Your team uses Flow. Before you join, here is exactly what your admin will see.' : 'Ask your admin for a new invite link.',
+      subtitle: ok
+          ? 'Your team uses Flow. Before you join, here is exactly what your admin will see.'
+          : 'Ask your admin for a new invite link.',
       stage: ok ? StageState.rest : StageState.error,
       form: [
         if (ok) ...[

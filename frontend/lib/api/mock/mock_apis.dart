@@ -600,7 +600,23 @@ class MockTeamApi implements TeamApi {
     if (b.scenario == MockScenario.smallTeam) {
       return const Suppressible<TeamMetrics>(groupSize: 3, suppressed: true, reason: 'min_group_size_5');
     }
-    return Suppressible(groupSize: 8, suppressed: false, data: TeamMetrics(averageFocus: 0.68, trend: _trend(7)));
+    // the same people the admin pages show, as averages
+    final all = mockMembers(small: false);
+    final worked = all.expand((m) => m.focusByDay).where((v) => v > 0).toList();
+    final taken = all.fold(0, (a, m) => a + m.breaksTaken), offered = all.fold(0, (a, m) => a + m.breaksSuggested);
+    return Suppressible(
+      groupSize: all.length,
+      suppressed: false,
+      data: TeamMetrics(
+        averageFocus: 0.68,
+        trend: _trend(7),
+        focusMinutesPerDay: worked.isEmpty ? 0 : (worked.reduce((a, b) => a + b) / worked.length).round(),
+        sessionsPerDay: worked.isEmpty ? 0 : all.fold(0, (a, m) => a + m.sessions) / worked.length,
+        breakUptake: offered == 0 ? null : taken / offered,
+        peakHours: const [10, 11, 14],
+        focusMinutesThisWeek: (all.fold(0, (a, m) => a + m.focusMinutes) / all.length).round(),
+      ),
+    );
   });
 }
 
@@ -632,8 +648,15 @@ class MockAdminApi implements AdminApi {
   });
 
   @override
-  Future<Suppressible<AdminSummary>> summary() =>
-      _sup('/admin/summary', () => AdminSummary(activeCount: 5, avgFocusTrend: _trend(7), sessionVolume: 31));
+  Future<Suppressible<AdminSummary>> summary() => _sup('/admin/summary', () {
+    // the same people the People pages show, so the two never disagree
+    final all = mockMembers(small: false);
+    return AdminSummary(
+      activeCount: all.where((m) => m.inSession).length,
+      avgFocusTrend: _trend(7),
+      sessionVolume: all.fold(0, (a, m) => a + m.sessions),
+    );
+  });
 
   @override
   Future<Suppressible<AdminTrend>> trend() => _sup('/admin/trend', () => AdminTrend(days7: _trend(7), days30: _trend(30)));
@@ -688,8 +711,7 @@ class MockAdminApi implements AdminApi {
   Future<List<AuditEntry>> auditLog() => _admin('GET', '/admin/audit-log', () => List.of(b.audit));
 
   @override
-  Future<List<MemberSummary>> members() =>
-      _admin('GET', '/admin/members', () => mockMembers(small: b.scenario == MockScenario.smallTeam));
+  Future<List<MemberSummary>> members() => _admin('GET', '/admin/members', () => mockMembers(small: b.scenario == MockScenario.smallTeam));
 
   @override
   Future<MemberDetail> member(String id) => _admin('GET', '/admin/members/$id', () {

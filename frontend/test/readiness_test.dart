@@ -4,7 +4,7 @@ import 'package:flow/state/auth_controller.dart';
 import 'package:flow/state/boot.dart';
 import 'package:flow/theme/tokens.dart';
 import 'package:flow/ui/loading_blocks.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -25,7 +25,11 @@ void main() {
   });
 
   testWidgets('a duration numeral keeps its units small and apart from the numbers', (tester) async {
-    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: Center(child: DurationNumeral(85, size: 40)))));
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(body: Center(child: DurationNumeral(85, size: 40))),
+      ),
+    );
     final rich = tester.widget<RichText>(find.descendant(of: find.byType(DurationNumeral), matching: find.byType(RichText)));
     final spans = <TextSpan>[];
     rich.text.visitChildren((s) {
@@ -41,7 +45,9 @@ void main() {
   });
 
   test('boot: signed out there is nothing to wait for; signed in it waits for Home\'s data, but never past the cap', () async {
-    final b = MockBackend(config: const MockConfig(latency: Duration(milliseconds: 60), tick: Duration(hours: 1)));
+    final b = MockBackend(
+      config: const MockConfig(latency: Duration(milliseconds: 60), tick: Duration(hours: 1)),
+    );
     final c = mockContainer(b);
     c.listen(authProvider, (_, _) {});
     c.listen(bootReadyProvider, (_, _) {});
@@ -64,7 +70,11 @@ void main() {
     tester.view.physicalSize = const Size(1440, 900);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
-    final c = mockContainer(MockBackend(config: const MockConfig(latency: Duration(milliseconds: 400), tick: Duration(hours: 1))));
+    final c = mockContainer(
+      MockBackend(
+        config: const MockConfig(latency: Duration(milliseconds: 400), tick: Duration(hours: 1)),
+      ),
+    );
     await tester.pumpWidget(UncontrolledProviderScope(container: c, child: const FlowApp()));
     await tester.pump(const Duration(seconds: 4));
     await tester.runAsync(() => c.read(authProvider.notifier).login(email: 'solo@flow.dev', password: 'password'));

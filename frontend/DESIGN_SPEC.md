@@ -585,7 +585,7 @@ One choice in Settings › Nudges (and guide step 4), kept per computer: **Full 
 - **The view (display → read-out → controls):** an amber tide rises from the bottom edge to *your break line* (the Score's nudge line) and calms; "Take 5?" lands above it, then its reason; the controls arrive last: Take a 5 min break · Snooze 5 / 10 / 20 · Why? · Dismiss · Not now. Everything scales with the window.
 - **Mouse first:** the keyboard is ignored for 1.5 s (it appears while you type elsewhere). Then Enter takes the break and Esc snoozes; the hint fades in when the keys are live.
 - **Steps back by itself:** unanswered for 60 s (or "Not now"), it returns to where it came from and waits as the corner card / the widget's amber dot, with a system notification if Flow is not in front.
-- **Notification:** the corner card in Flow (it rises in), the widget's card when popped out, and a system notification when Flow is hidden or behind other work.
+- **Notification:** the corner card in Flow, top right (it drops in), the widget's card when popped out, and a system notification when Flow is hidden or behind other work.
 - **If the OS refuses the window shape,** the takeover shows inside Flow's own window instead.
 - **Dev:** `/dev/login?as=solo&nudge=fullScreen|windowed|notification` signs in, starts a session and sends a nudge in that style.
 
@@ -615,3 +615,34 @@ Settings › Appearance, kept per computer: **This computer** (follows the syste
 - **By time of day:** light between two times you set (default 07:00–19:00), dark for the rest. The span may cross midnight. Flow switches by itself within a minute of the boundary.
 - **The day strip** beside the options shows the 24 hours as paper and ink, with a tick for now, for whichever option is chosen.
 - The index shows the current choice ("This computer", "Dark", "Light 07:00–19:00").
+
+## 34. First-run guide (built)
+
+Two panes: a stage on the left that shows the thing, words and the one control on the right. Six steps, a segmented progress line (solid = done, dashed = to come), arrow keys move between them.
+
+1. **What Flow does:** a working day draws itself once (tap to replay): focus blocks rise, breaks sit between them in amber.
+2. **What it senses:** three live meters (keys, switches, idle). Consent is given here and the guide cannot go past it without it.
+3. **The agent:** this computer and Flow joined by a line, dashed until the agent answers. Under it, two lists: what is sent along the line, and what never is (struck through).
+4. **How a nudge arrives:** the three styles with a preview each.
+5. **Practice:** a real nudge card, scaled with the stage, that responds to its buttons.
+6. **Start:** the dial, already live. The first session starts from here.
+
+## 35. Light ↔ dark: the spread (built)
+
+A change of theme is not a cross-fade. The new theme is already underneath; the old one is a snapshot on top that gets eaten away.
+
+- **Origin:** where you last pressed (the Settings option), or the top-left corner when the schedule or the system changes it.
+- **The front** is uneven: its radius varies with angle, slower lobes and faster ones, so it never reads as a circle.
+- **Tendrils** run ahead of the front and thicken as it reaches them. **Spores** land ahead of it, grow, bud, and merge when the front arrives.
+- **The edge** carries a thin accent rim and a soft halo: the only place the green shows.
+- 1.25 s. With reduced motion it is a plain 200 ms fade. In a browser the theme just switches (no snapshot there).
+
+## 36. Team and person detail (built)
+
+- **Team:** a row of numbers for the week (focus per person per day, sessions per day, break uptake, the hours most people focus), a strip showing how spread out the team is (one dot per person, no names), and a typical day with your own lane over the team's.
+- **Person (admin only):** "When they focus" (24 hours, bar per hour), "Kind of work" (share by demand), "Rhythm" (average session, longest stretch, usual hours, breaks taken when suggested). People rows carry ▲/▼ against last week.
+- The team page never names anyone; names exist only under People.
+
+## 37. The corner nudge (built)
+
+In the full window the notification-style nudge drops in from above at the top right, under the title row, so it never covers the controls at the bottom of a page. It is hidden while a takeover is on screen.

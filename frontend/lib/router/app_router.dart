@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -104,7 +104,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           GoRoute(path: Routes.team, builder: (_, _) => const TeamScreen()),
           GoRoute(path: Routes.admin, builder: (_, _) => const AdminScreen()),
           GoRoute(path: Routes.adminPeople, builder: (_, _) => const PeopleScreen()),
-          GoRoute(path: '${Routes.adminPeople}/:id', builder: (_, s) => MemberScreen(id: s.pathParameters['id'] ?? '')),
+          GoRoute(
+            path: '${Routes.adminPeople}/:id',
+            builder: (_, s) => MemberScreen(id: s.pathParameters['id'] ?? ''),
+          ),
           // Focus DNA lives in Insights now
           GoRoute(path: Routes.export, builder: (_, _) => const InsightsScreen()),
           GoRoute(path: Routes.feedback, builder: (_, _) => const FeedbackScreen()),

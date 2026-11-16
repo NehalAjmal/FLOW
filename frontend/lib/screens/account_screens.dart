@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/api_connector.dart';
@@ -219,7 +219,10 @@ class _FeedbackScreenState extends ConsumerState<FeedbackScreen> {
                             textBaseline: TextBaseline.alphabetic,
                             children: [
                               // chart voice: the display numerals have no full stop
-                              Text(e.version, style: FlowType.chart(p, size: 15, color: p.text1, weight: FontWeight.w600)),
+                              Text(
+                                e.version,
+                                style: FlowType.chart(p, size: 15, color: p.text1, weight: FontWeight.w600),
+                              ),
                               const SizedBox(width: 10),
                               if (e.date != null)
                                 Text(MaterialLocalizations.of(context).formatMediumDate(e.date!), style: FlowType.chart(p, size: 10.5)),
