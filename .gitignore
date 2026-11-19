@@ -46,5 +46,10 @@ frontend/ios/Flutter/ephemeral/
 frontend/ios/Flutter/Generated.xcconfig
 frontend/ios/Flutter/flutter_export_environment.sh
 
+# ── Flutter generated plugin registrants ──────────────────
+**/GeneratedPluginRegistrant.java
+**/GeneratedPluginRegistrant.h
+**/GeneratedPluginRegistrant.m
+
 # ── Runtime artifacts ─────────────────────────────────────
 Backend/ml_models/fatigue.json
