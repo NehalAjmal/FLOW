@@ -1,5 +1,7 @@
 import jwt
 import bcrypt
+import hashlib
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from dotenv import find_dotenv, load_dotenv
@@ -10,6 +12,7 @@ from config import settings
 
 SECRET_KEY = settings.jwt_secret_key
 ALGORITHM  = "HS256"
+REFRESH_TOKEN_EXPIRE_DAYS = 7
 
 
 def get_password_hash(password: str) -> str:
@@ -24,11 +27,6 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         )
     except ValueError:
         # Catch the "Invalid salt" crash if the DB contains a plain text password.
-
-        # HACKATHON BYPASS: If you are manually typing passwords into your DB
-        # to test the demo, uncomment the line below to just allow plain-text matches:
-        # return plain_password == hashed_password
-
         return False
 
 
@@ -39,3 +37,13 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     )
     to_encode["exp"] = expire
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def create_refresh_token() -> str:
+    """Generate a cryptographically secure refresh token string."""
+    return secrets.token_urlsafe(48)
+
+
+def hash_token(token: str) -> str:
+    """SHA-256 hash of token for safe DB persistence."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()

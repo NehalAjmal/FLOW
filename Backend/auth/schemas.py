@@ -35,11 +35,23 @@ class GoogleAuthRequest(BaseModel):
 
 
 class RegisterResponse(BaseModel):
-    user_id:     str
-    token:       str
-    role:        str
-    team_id:     Optional[str] = None
-    redirect_to: str
+    user_id:       str
+    token:         str
+    access_token:  Optional[str] = None
+    refresh_token: Optional[str] = None
+    role:          str
+    team_id:       Optional[str] = None
+    redirect_to:   str
 
 
 LoginResponse = RegisterResponse
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+class RefreshResponse(BaseModel):
+    access_token:  str
+    refresh_token: str
+    token:         Optional[str] = None

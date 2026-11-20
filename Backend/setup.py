@@ -85,6 +85,7 @@ def create_tables():
     import db_models.breaks          # noqa
     import db_models.calendar_cache  # noqa
     import db_models.llm_cache       # noqa
+    import db_models.refresh_token   # noqa
 
     engine = create_engine(DATABASE_URL)
     Base.metadata.create_all(bind=engine)
