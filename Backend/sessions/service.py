@@ -304,7 +304,10 @@ def ingest_signal(
         live["intervention"] = get_intervention(new_state)
 
     # ── DB LOG ───────────────────────────────
-    log = session.signal_log or []
+    # FIX: list() creates a NEW object so SQLAlchemy detects the change.
+    # Previously, append() mutated the tracked list in-place → ORM saw
+    # old value == new value → no UPDATE was emitted after the first tick.
+    log = list(session.signal_log or [])
 
     log.append({
         "ts": timestamp,
