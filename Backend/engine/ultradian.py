@@ -1,12 +1,23 @@
+
 import time
-import math
 
 
 class UltradianEngine:
     def __init__(self, cycle_minutes: int = 90):
         """
-        cycle_minutes: typical ultradian cycle (default 90 min)
+        cycle_minutes: personalized focus cycle duration.
+        Default: 90 minutes.
+
+        Score:
+            0.0 = beginning of focus cycle
+            1.0 = personal cycle duration reached
         """
+
+        if cycle_minutes <= 0:
+            raise ValueError(
+                "cycle_minutes must be positive"
+            )
+
         self.cycle_seconds = cycle_minutes * 60
         self.start_time = None
 
@@ -18,36 +29,47 @@ class UltradianEngine:
         self.start_time = time.time()
 
     # ─────────────────────────────────────────────
+    # RESET AFTER COMPLETED BREAK
+    # ─────────────────────────────────────────────
+
+    def reset_after_break(self):
+        self.start()
+
+    # ─────────────────────────────────────────────
     # MAIN COMPUTE FUNCTION
     # ─────────────────────────────────────────────
 
     def compute(self) -> float:
         """
-        Returns ultradian score (0–1)
+        Returns normalized ultradian pressure (0–1).
+
+        Pressure increases as time passes since
+        the last completed break.
         """
 
         if self.start_time is None:
-            return 1.0  # default peak
+            return 0.0
 
-        elapsed = time.time() - self.start_time
+        elapsed = max(
+            0.0,
+            time.time() - self.start_time
+        )
 
-        # normalize within cycle
-        phase = (elapsed % self.cycle_seconds) / self.cycle_seconds
+        score = elapsed / self.cycle_seconds
 
-        # cosine curve (smooth drop + rise)
-        score = 0.5 * (1 + math.cos(2 * math.pi * phase))
-
-        # invert so:
-        # start = high, middle = low, reset = high
-        score = 1 - score
+        score = min(1.0, max(0.0, score))
 
         return round(score, 3)
 
     # ─────────────────────────────────────────────
-    # OPTIONAL: GET RAW INFO
+    # GET RAW INFO
     # ─────────────────────────────────────────────
 
     def get_elapsed_minutes(self) -> float:
         if self.start_time is None:
             return 0.0
-        return (time.time() - self.start_time) / 60.0
+
+        return max(
+            0.0,
+            (time.time() - self.start_time) / 60.0
+        )
