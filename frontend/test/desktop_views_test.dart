@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flow/api/mock/mock_backend.dart';
 import 'package:flow/api/models/session.dart';
@@ -15,11 +16,12 @@ import 'package:flow/state/auth_controller.dart';
 import 'package:flow/state/session_controller.dart';
 import 'package:flow/theme/tokens.dart';
 import 'package:flow/ui/dial.dart';
+import 'package:flow/ui/theme_spread.dart';
 import 'package:flow/ui/range_slider.dart';
 import 'package:flow/ui/nudge_card.dart';
 import 'package:flow/ui/brand/launch_overlay.dart';
 import 'package:flutter/gestures.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -37,13 +39,16 @@ void main() {
   takeoverViewTests();
   settingsNavTests();
   appearanceTests();
+  themeSpreadTests();
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
   Future<ProviderContainer> boot(WidgetTester tester, Size size) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
-    final b = MockBackend(config: const MockConfig(latency: Duration.zero, tick: Duration(hours: 1)));
+    final b = MockBackend(
+      config: const MockConfig(latency: Duration.zero, tick: Duration(hours: 1)),
+    );
     final c = mockContainer(b);
     await tester.pumpWidget(UncontrolledProviderScope(container: c, child: const FlowApp()));
     await tester.pump(const Duration(seconds: 4));
@@ -72,7 +77,9 @@ void main() {
     testWidgets('${mode.name} view renders with tooltips (has an Overlay)', (tester) async {
       final c = await boot(tester, const Size(1280, 800));
       await tester.runAsync(
-        () => c.read(liveSessionProvider.notifier).start(const StartSessionRequest(taskText: 'Draft', demand: Demand.moderate, plannedMinutes: 50)),
+        () => c
+            .read(liveSessionProvider.notifier)
+            .start(const StartSessionRequest(taskText: 'Draft', demand: Demand.moderate, plannedMinutes: 50)),
       );
       await settle(tester);
       c.read(windowModeProvider.notifier).debugPreview(mode);
@@ -100,7 +107,11 @@ void main() {
 
   testWidgets('the launch reveal ends without remounting the app beneath it', (tester) async {
     _Probe.mounts = 0;
-    final c = mockContainer(MockBackend(config: const MockConfig(latency: Duration.zero, tick: Duration(hours: 1))));
+    final c = mockContainer(
+      MockBackend(
+        config: const MockConfig(latency: Duration.zero, tick: Duration(hours: 1)),
+      ),
+    );
     await tester.pumpWidget(
       UncontrolledProviderScope(
         container: c,
@@ -174,7 +185,8 @@ void dialTests() {
     // Still held. What the read-out says in this very frame must be what it
     // says after waiting: with a spring between hand and ring it would still
     // be travelling now and read something else a moment later.
-    String label() => tester.widget<TabularNumeral>(find.descendant(of: find.byType(DurationDial), matching: find.byType(TabularNumeral))).text;
+    String label() =>
+        tester.widget<TabularNumeral>(find.descendant(of: find.byType(DurationDial), matching: find.byType(TabularNumeral))).text;
     final now = label();
     await tester.pump(const Duration(seconds: 1));
     expect(label(), now, reason: 'the ring is where the hand is, not chasing it');
@@ -186,12 +198,14 @@ void dialTests() {
 }
 
 void arrivalTests() {
-  testWidgets('the nudge card rises in (and is not simply there on the first frame)', (tester) async {
+  testWidgets('the nudge card drops in (and is not simply there on the first frame)', (tester) async {
     SharedPreferences.setMockInitialValues({});
     tester.view.physicalSize = const Size(1440, 900);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
-    final b = MockBackend(config: const MockConfig(latency: Duration.zero, tick: Duration(hours: 1)));
+    final b = MockBackend(
+      config: const MockConfig(latency: Duration.zero, tick: Duration(hours: 1)),
+    );
     final c = mockContainer(b);
     await tester.pumpWidget(UncontrolledProviderScope(container: c, child: const FlowApp()));
     await tester.pump(const Duration(seconds: 4));
@@ -200,7 +214,8 @@ void arrivalTests() {
       await tester.pump(const Duration(milliseconds: 200));
     }
     await tester.runAsync(
-      () => c.read(liveSessionProvider.notifier).start(const StartSessionRequest(taskText: 'x', demand: Demand.moderate, plannedMinutes: 50)),
+      () =>
+          c.read(liveSessionProvider.notifier).start(const StartSessionRequest(taskText: 'x', demand: Demand.moderate, plannedMinutes: 50)),
     );
     for (var i = 0; i < 10; i++) {
       await tester.pump(const Duration(milliseconds: 200));
@@ -219,7 +234,7 @@ void arrivalTests() {
     }
     await tester.pump(const Duration(seconds: 1));
     final rest = tester.getTopLeft(card).dy;
-    expect(early, greaterThan(rest + 8), reason: 'it starts lower and rises into place');
+    expect(early, lessThan(rest - 8), reason: 'it starts higher and drops into place');
     final err = tester.takeException();
     await tester.pumpWidget(const SizedBox());
     c.dispose();
@@ -232,7 +247,11 @@ void arrivalTests() {
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
-    final c = mockContainer(MockBackend(config: const MockConfig(latency: Duration.zero, tick: Duration(hours: 1))));
+    final c = mockContainer(
+      MockBackend(
+        config: const MockConfig(latency: Duration.zero, tick: Duration(hours: 1)),
+      ),
+    );
     await tester.pumpWidget(UncontrolledProviderScope(container: c, child: const FlowApp()));
     await tester.pump(const Duration(seconds: 4));
     await tester.runAsync(() => c.read(authProvider.notifier).login(email: 'solo@flow.dev', password: 'password'));
@@ -240,7 +259,8 @@ void arrivalTests() {
       await tester.pump(const Duration(milliseconds: 200));
     }
     await tester.runAsync(
-      () => c.read(liveSessionProvider.notifier).start(const StartSessionRequest(taskText: 'x', demand: Demand.moderate, plannedMinutes: 50)),
+      () =>
+          c.read(liveSessionProvider.notifier).start(const StartSessionRequest(taskText: 'x', demand: Demand.moderate, plannedMinutes: 50)),
     );
     final ctl = c.read(windowModeProvider.notifier);
     ctl.debugPreview(WindowMode.mini);
@@ -269,7 +289,9 @@ void takeoverViewTests() {
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
-    final b = MockBackend(config: const MockConfig(latency: Duration.zero, tick: Duration(hours: 1)));
+    final b = MockBackend(
+      config: const MockConfig(latency: Duration.zero, tick: Duration(hours: 1)),
+    );
     final c = mockContainer(b);
     await tester.pumpWidget(UncontrolledProviderScope(container: c, child: const FlowApp()));
     await tester.pump(const Duration(seconds: 4));
@@ -279,7 +301,8 @@ void takeoverViewTests() {
     }
     await c.read(desktopPrefsProvider.notifier).set(DesktopPrefs(nudgeStyle: style));
     await tester.runAsync(
-      () => c.read(liveSessionProvider.notifier).start(const StartSessionRequest(taskText: 'x', demand: Demand.moderate, plannedMinutes: 50)),
+      () =>
+          c.read(liveSessionProvider.notifier).start(const StartSessionRequest(taskText: 'x', demand: Demand.moderate, plannedMinutes: 50)),
     );
     for (var i = 0; i < 5; i++) {
       await tester.pump(const Duration(milliseconds: 200));
@@ -376,7 +399,11 @@ void settingsNavTests() {
     tester.view.physicalSize = const Size(1440, 900);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
-    final c = mockContainer(MockBackend(config: const MockConfig(latency: Duration.zero, tick: Duration(hours: 1))));
+    final c = mockContainer(
+      MockBackend(
+        config: const MockConfig(latency: Duration.zero, tick: Duration(hours: 1)),
+      ),
+    );
     await tester.pumpWidget(UncontrolledProviderScope(container: c, child: const FlowApp()));
     await tester.pump(const Duration(seconds: 4));
     await tester.runAsync(() => c.read(authProvider.notifier).login(email: 'solo@flow.dev', password: 'password'));
@@ -541,7 +568,11 @@ void appearanceTests() {
     tester.view.physicalSize = const Size(1440, 900);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
-    final c = mockContainer(MockBackend(config: const MockConfig(latency: Duration.zero, tick: Duration(hours: 1))));
+    final c = mockContainer(
+      MockBackend(
+        config: const MockConfig(latency: Duration.zero, tick: Duration(hours: 1)),
+      ),
+    );
     await tester.pumpWidget(UncontrolledProviderScope(container: c, child: const FlowApp()));
     await tester.pump(const Duration(seconds: 4));
     await tester.runAsync(() => c.read(authProvider.notifier).login(email: 'solo@flow.dev', password: 'password'));
@@ -581,4 +612,96 @@ void appearanceTests() {
     await tester.pump(const Duration(seconds: 1));
     expect(err, isNull);
   });
+}
+
+void themeSpreadTests() {
+  test('the spread leaves nothing behind: at the end the front is past the farthest corner in every direction', () async {
+    final img = await _blank();
+    for (final seed in [1, 7, 4242, 65535]) {
+      for (final origin in const [Offset(40, 40), Offset(700, 450), Offset(1400, 880)]) {
+        final painter = SpreadPainter(
+          image: img,
+          t: const AlwaysStoppedAnimation(1),
+          origin: origin,
+          seed: seed,
+          rim: const Color(0xFF0B8A70),
+        );
+        final far = SpreadPainter.reach(const Size(1440, 900), origin);
+        for (var i = 0; i < 720; i++) {
+          final a = i / 720 * math.pi * 2;
+          expect(painter.radius(a, 1, far), greaterThanOrEqualTo(far), reason: 'seed $seed origin $origin angle $i');
+          expect(painter.radius(a, 0, far), 0);
+        }
+      }
+    }
+    img.dispose();
+  });
+
+  test('the front is not a circle: its radius varies with direction mid-spread', () async {
+    final img = await _blank();
+    final painter = SpreadPainter(
+      image: img,
+      t: const AlwaysStoppedAnimation(0.5),
+      origin: Offset.zero,
+      seed: 99,
+      rim: const Color(0xFF0B8A70),
+    );
+    final r = [for (var i = 0; i < 360; i++) painter.radius(i / 360 * math.pi * 2, 0.5, 1000)];
+    final lo = r.reduce(math.min), hi = r.reduce(math.max);
+    expect(hi / lo, greaterThan(1.15), reason: 'wobble and tendrils');
+    img.dispose();
+  });
+
+  testWidgets('changing the theme spreads: the old page is on top at first, gone at the end, and the app is dark underneath at once', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final c = mockContainer(
+      MockBackend(
+        config: const MockConfig(latency: Duration.zero, tick: Duration(hours: 1)),
+      ),
+    );
+    await tester.pumpWidget(UncontrolledProviderScope(container: c, child: const FlowApp()));
+    await tester.pump(const Duration(seconds: 5)); // launch over: there is a page to spread across
+    final spread = tester.state<ThemeSpreadState>(find.byType(ThemeSpread));
+    expect(spread.spreading, isFalse);
+    await c.read(desktopPrefsProvider.notifier).set(c.read(desktopPrefsProvider).copyWith(appearance: Appearance.dark));
+    await tester.pump();
+    expect(spread.spreading, isTrue, reason: 'the captured light page is laid over the app');
+    expect(
+      Theme.of(tester.element(find.byType(Scaffold).first)).brightness,
+      Brightness.dark,
+      reason: 'underneath, the app is already dark',
+    );
+    expect(find.byWidgetPredicate((w) => w is CustomPaint && w.painter is SpreadPainter), findsOneWidget);
+    // every frame of it paints without error
+    for (var i = 0; i < 90; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(tester.takeException(), isNull);
+    expect(spread.spreading, isFalse, reason: 'the old page is gone when the spread completes');
+    expect(find.byWidgetPredicate((w) => w is CustomPaint && w.painter is SpreadPainter), findsNothing);
+    // and back, interrupted half way by another change: no leak, no error
+    await c.read(desktopPrefsProvider.notifier).set(c.read(desktopPrefsProvider).copyWith(appearance: Appearance.light));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await c.read(desktopPrefsProvider.notifier).set(c.read(desktopPrefsProvider).copyWith(appearance: Appearance.dark));
+    await tester.pump();
+    expect(spread.spreading, isTrue);
+    await tester.pump(const Duration(seconds: 2));
+    expect(spread.spreading, isFalse);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    c.dispose();
+    await tester.pump(const Duration(seconds: 1));
+  });
+}
+
+Future<ui.Image> _blank() async {
+  final rec = ui.PictureRecorder();
+  ui.Canvas(rec).drawRect(const Rect.fromLTWH(0, 0, 4, 4), Paint());
+  return rec.endRecording().toImage(4, 4);
 }

@@ -6,7 +6,7 @@
 // ════════════════════════════════════════════════════════════════════════════
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show Override, ProviderOrFamily;
@@ -324,7 +324,7 @@ class _SimulateBoxState extends ConsumerState<_SimulateBox> {
       }
     }
     final why = b.forceNudge();
-    if (mounted) setState(() => _status = why ?? 'Nudge sent: it shows bottom-right (or as the card in widget mode).');
+    if (mounted) setState(() => _status = why ?? 'Nudge sent, in the style chosen in Settings › Nudges.');
   }
 
   @override

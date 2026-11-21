@@ -6,6 +6,7 @@ from db_models.biometric      import BiometricReading
 from db_models.breaks        import Break
 from db_models.calendar_cache import CalendarCache
 from db_models.llm_cache      import LLMCache
+from db_models.refresh_token  import RefreshToken
 
 __all__ = [
     "Base", "engine", "SessionLocal", "get_db",
@@ -16,4 +17,5 @@ __all__ = [
     "Break",
     "CalendarCache",
     "LLMCache",
+    "RefreshToken",
 ]

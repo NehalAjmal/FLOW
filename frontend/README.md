@@ -126,7 +126,7 @@ In a dev build, the dev panel's "Window" row previews full/mini/card/lock in a b
 
 ## Flutter version (team pin)
 
-Everyone builds with **Flutter 3.47.9** (Dart 3.13.7). It's pinned in `.fvmrc`, and `pubspec.yaml` refuses older SDKs.
+Everyone builds with **Flutter 3.50.0**. It's pinned in `.fvmrc`, and `pubspec.yaml` refuses older SDKs.
 
 ```bash
 dart pub global activate fvm
@@ -171,3 +171,9 @@ VS Code: set `"dart.flutterSdkPath": ".fvm/flutter_sdk"` in workspace settings. 
 - invite and reset tokens are single-use and expire
 - delete-account requires a fresh credential
 - the calendar OAuth redirect lands on the backend, never on the app
+
+## Platform notes
+
+- **Material import:** use `package:material_ui/material_ui.dart`, never `package:flutter/material.dart`. They are different copies of the same classes; go_router uses the first, and mixing them silently turns page transitions off.
+- **macOS:** tokens use the legacy (file-based) keychain, so the app builds and runs without a development certificate. The `keychain-access-groups` entitlement is deliberately absent; adding it back requires signing with a team.
+- **Linux build packages:** `libgtk-3-dev libayatana-appindicator3-dev libnotify-dev libsecret-1-dev libjsoncpp-dev`, plus a running keyring (gnome-keyring or KWallet) for sign-in.

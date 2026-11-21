@@ -1,11 +1,12 @@
 import 'dart:math' as math;
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../api/models/day.dart';
 import '../api/models/member.dart';
+import '../api/models/schedule.dart';
 import '../api/models/session.dart';
 import '../api/models/team.dart';
 import '../router/routes.dart';
@@ -384,7 +385,22 @@ class _PersonRowState extends State<_PersonRow> {
                   painter: _WeekBlocks(p, m.focusByDay, widget.peak, widget.avg, widget.today, widget.rise, widget.index),
                 ),
               ),
-              focus: DurationNumeral(m.focusMinutes, size: big ? 22 : 17),
+              focus: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  DurationNumeral(m.focusMinutes, size: big ? 22 : 17),
+                  // against last week, when the row has room for it
+                  if (big && m.focusDelta != null && m.focusDelta!.abs() >= 10)
+                    Text(
+                      '${m.focusDelta! > 0 ? '▲' : '▼'} ${flowDuration(m.focusDelta!.abs())} vs last week',
+                      maxLines: 1,
+                      overflow: TextOverflow.fade,
+                      softWrap: false,
+                      style: FlowType.chart(p, size: 10, color: p.text3),
+                    ),
+                ],
+              ),
               sessions: TabularNumeral('${m.sessions}', style: FlowType.numeral(p, big ? 22 : 17)),
               breaks: Row(
                 children: [
@@ -684,6 +700,87 @@ class _MemberScreenState extends ConsumerState<MemberScreen> with SingleTickerPr
                     ],
                   ),
           );
+          // more about how they work, all worked out from the week above
+          final hours = m.focusByHour;
+          final mix = m.demandMix;
+          final usual = m.usualHours;
+          final delta = s.focusDelta;
+          final whenCard = ColorField(
+            tone: FieldTone.past,
+            padding: const EdgeInsets.fromLTRB(20, 14, 20, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SectionLabel('When they focus'),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: Semantics(
+                    label: 'Focus by hour of the day this week',
+                    child: CustomPaint(size: Size.infinite, painter: _HoursPainter(p, hours, _rise, MediaQuery.textScalerOf(context))),
+                  ),
+                ),
+              ],
+            ),
+          );
+          final mixCard = ColorField(
+            tone: FieldTone.past,
+            padding: const EdgeInsets.fromLTRB(20, 14, 20, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SectionLabel('Kind of work'),
+                const Spacer(),
+                SizedBox(
+                  height: 14,
+                  child: CustomPaint(size: Size.infinite, painter: _MixPainter(p, mix, _rise)),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  mix.light + mix.moderate + mix.heavy == 0
+                      ? 'No sessions yet this week.'
+                      : 'light ${flowDuration(mix.light)} · moderate ${flowDuration(mix.moderate)} · heavy ${flowDuration(mix.heavy)}',
+                  style: FlowType.chart(p, size: 10.5, color: p.text2),
+                ),
+                const Spacer(),
+              ],
+            ),
+          );
+          final rhythmCard = ColorField(
+            tone: FieldTone.planned,
+            padding: const EdgeInsets.fromLTRB(20, 14, 20, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SectionLabel('Rhythm'),
+                const SizedBox(height: 8),
+                // scrolls rather than overflows if large text needs a third row
+                Expanded(
+                  child: SingleChildScrollView(
+                    child: Wrap(
+                      spacing: 22,
+                      runSpacing: 10,
+                      children: [
+                        _Stat(label: 'Average session', minutes: m.averageSessionMinutes, small: true),
+                        _Stat(label: 'Longest without a break', minutes: m.longestStretchMinutes, small: true),
+                        _Stat(
+                          label: 'Usual hours',
+                          value: usual == null ? '–' : '${Schedule.hm(usual.start)}–${Schedule.hm(usual.end)}',
+                          small: true,
+                        ),
+                        _Stat(label: 'Days active', value: '${s.daysActive}', small: true),
+                        if (delta != null)
+                          _Stat(
+                            label: 'Against last week',
+                            value: delta.abs() < 10 ? 'the same' : '${delta > 0 ? '+' : '−'}${flowDuration(delta.abs())}',
+                            small: true,
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
           if (!wide) {
             return ListView(
               children: [
@@ -694,15 +791,48 @@ class _MemberScreenState extends ConsumerState<MemberScreen> with SingleTickerPr
                 responsesCard,
                 gap,
                 SizedBox(height: 280, child: trendsCard),
+                gap,
+                SizedBox(height: 150, child: whenCard),
+                gap,
+                SizedBox(height: 120, child: mixCard),
+                gap,
+                SizedBox(height: 190, child: rhythmCard),
               ],
             );
           }
-          return Row(
+          final top = Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Expanded(flex: 12, child: week),
               const SizedBox(width: 18),
               Expanded(flex: 9, child: numbers),
+            ],
+          );
+          final detail = Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(flex: 10, child: whenCard),
+              const SizedBox(width: 14),
+              Expanded(flex: 7, child: mixCard),
+              const SizedBox(width: 14),
+              Expanded(flex: 12, child: rhythmCard),
+            ],
+          );
+          // tall window: everything on one page. Shorter: the same, scrolling.
+          if (box.maxHeight >= 780) {
+            return Column(
+              children: [
+                Expanded(child: top),
+                gap,
+                SizedBox(height: 156, child: detail),
+              ],
+            );
+          }
+          return ListView(
+            children: [
+              SizedBox(height: math.max(box.maxHeight - 40, 520), child: top),
+              gap,
+              SizedBox(height: 156, child: detail),
             ],
           );
         },
@@ -736,9 +866,10 @@ class _MemberScreenState extends ConsumerState<MemberScreen> with SingleTickerPr
 }
 
 class _Stat extends StatelessWidget {
-  const _Stat({required this.label, this.value, this.minutes}) : assert(value != null || minutes != null);
+  const _Stat({required this.label, this.value, this.minutes, this.small = false}) : assert(value != null || minutes != null);
   final String label;
   final String? value;
+  final bool small;
 
   /// A length of time: drawn with small units instead of [value].
   final int? minutes;
@@ -750,7 +881,10 @@ class _Stat extends StatelessWidget {
       children: [
         SectionLabel(label),
         const SizedBox(height: 2),
-        if (minutes != null) DurationNumeral(minutes!, size: 24) else TabularNumeral(value!, style: FlowType.numeral(p, 24)),
+        if (minutes != null)
+          DurationNumeral(minutes!, size: small ? 19 : 24)
+        else
+          TabularNumeral(value!, style: FlowType.numeral(p, small ? 19 : 24)),
       ],
     );
   }
@@ -976,4 +1110,85 @@ class _TrendsPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_TrendsPainter o) => o.focus != focus || o.strain != strain || o.p != p;
+}
+
+/// Focus minutes by hour of the day (the hours anyone worked in, padded to
+/// whole working hours), as bars on a line. The busiest hour is the darkest.
+class _HoursPainter extends CustomPainter {
+  _HoursPainter(this.p, this.hours, this.rise, this.scaler) : super(repaint: rise);
+  final FlowPalette p;
+  final List<int> hours;
+  final Animation<double> rise;
+  final TextScaler scaler;
+
+  @override
+  void paint(Canvas c, Size s) {
+    const foot = 16.0;
+    final used = [
+      for (var h = 0; h < 24; h++)
+        if (hours[h] > 0) h,
+    ];
+    final h0 = used.isEmpty ? 8 : math.min(used.first, 8), h1 = used.isEmpty ? 18 : math.max(used.last, 17);
+    final n = h1 - h0 + 1;
+    final slot = s.width / n;
+    final peak = math.max(1, hours.reduce(math.max));
+    final base = s.height - foot;
+    final t = rise.isCompleted ? 1.0 : Motion.settleAt(rise.value * 1.1);
+    c.drawLine(Offset(0, base), Offset(s.width, base), Paint()..color = p.hairline);
+    for (var i = 0; i < n; i++) {
+      final h = h0 + i;
+      final v = hours[h] / peak;
+      final bh = (base - 2) * v * t;
+      if (bh >= 1) {
+        c.drawRRect(
+          RRect.fromRectAndCorners(
+            Rect.fromLTWH(i * slot + slot * 0.18, base - bh, slot * 0.64, bh),
+            topLeft: const Radius.circular(2),
+            topRight: const Radius.circular(2),
+          ),
+          Paint()..color = v > 0.8 ? p.pastHeavy : (v > 0.45 ? p.pastModerate : p.pastLight),
+        );
+      }
+      if (h % 2 == 0 || n <= 8) {
+        final tp = TextPainter(
+          text: TextSpan(text: '$h', style: FlowType.chart(p, size: 9.5)),
+          textDirection: TextDirection.ltr,
+          textScaler: scaler,
+        )..layout();
+        tp.paint(c, Offset(i * slot + slot / 2 - tp.width / 2, base + 3));
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_HoursPainter o) => o.hours != hours || o.p != p || o.scaler != scaler;
+}
+
+/// light | moderate | heavy as one bar, in the three stone tones.
+class _MixPainter extends CustomPainter {
+  _MixPainter(this.p, this.mix, this.rise) : super(repaint: rise);
+  final FlowPalette p;
+  final ({int light, int moderate, int heavy}) mix;
+  final Animation<double> rise;
+
+  @override
+  void paint(Canvas c, Size s) {
+    final total = mix.light + mix.moderate + mix.heavy;
+    final r = RRect.fromRectAndRadius(Offset.zero & s, const Radius.circular(3));
+    c.drawRRect(r, Paint()..color = p.recess);
+    if (total == 0) return;
+    final t = rise.isCompleted ? 1.0 : Motion.settleAt(rise.value * 1.1);
+    c.save();
+    c.clipRRect(r);
+    var x = 0.0;
+    for (final (v, col) in [(mix.light, p.pastLight), (mix.moderate, p.pastModerate), (mix.heavy, p.pastHeavy)]) {
+      final w = s.width * v / total * t;
+      c.drawRect(Rect.fromLTWH(x, 0, w, s.height), Paint()..color = col);
+      x += w;
+    }
+    c.restore();
+  }
+
+  @override
+  bool shouldRepaint(_MixPainter o) => o.mix != mix || o.p != p;
 }

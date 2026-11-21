@@ -12,7 +12,16 @@ abstract interface class TokenStore {
 
 /// OS keychain (macOS Keychain, Windows Credential Manager / DPAPI).
 class SecureTokenStore implements TokenStore {
-  SecureTokenStore([FlutterSecureStorage? storage]) : _s = storage ?? const FlutterSecureStorage();
+  /// macOS: the legacy keychain, not the data-protection one. The
+  /// data-protection keychain needs the `keychain-access-groups` entitlement
+  /// (Keychain Sharing), which demands a development certificate and a
+  /// provisioning profile: without one the app does not even build
+  /// ("Runner has entitlements that require signing with a development
+  /// certificate"). The legacy keychain is still the user's encrypted login
+  /// keychain; Flow shares nothing with other apps, so nothing is lost.
+  /// The option is ignored on other platforms.
+  SecureTokenStore([FlutterSecureStorage? storage])
+    : _s = storage ?? const FlutterSecureStorage(mOptions: MacOsOptions(usesDataProtectionKeychain: false));
 
   final FlutterSecureStorage _s;
   static const _access = 'flow.access_token';

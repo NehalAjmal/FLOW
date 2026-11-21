@@ -276,10 +276,10 @@ class MockBackend {
     final interventionDue =
         forced ||
         scenario != MockScenario.quiet &&
-        !breakActive &&
-        r.session.pendingInterventionId == null &&
-        r.ticksSinceReset >= config.ticksToIntervention &&
-        !(pause[currentUserId]?.paused ?? false);
+            !breakActive &&
+            r.session.pendingInterventionId == null &&
+            r.ticksSinceReset >= config.ticksToIntervention &&
+            !(pause[currentUserId]?.paused ?? false);
     if (interventionDue) {
       final mode = settingsFor(currentUserId ?? '').deliveryMode;
       final i = Intervention(

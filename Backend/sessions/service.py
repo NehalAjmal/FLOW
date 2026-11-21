@@ -20,8 +20,6 @@ from learning.engine import PatternLearner
 #  FATIGUE SERVICE
 from ml_models.fatigue_model import fatigue_service
 
-pattern_learner = PatternLearner()
-
 _live_sessions: dict = {}
 
 # The agent sends a tick every 30s; the log covers ~5h before capping.
@@ -322,7 +320,10 @@ def ingest_signal(
         live["intervention"] = get_intervention(new_state)
 
     # ── DB LOG ───────────────────────────────
-    log = session.signal_log or []
+    # FIX: list() creates a NEW object so SQLAlchemy detects the change.
+    # Previously, append() mutated the tracked list in-place → ORM saw
+    # old value == new value → no UPDATE was emitted after the first tick.
+    log = list(session.signal_log or [])
 
     log.append({
         "ts": timestamp,
@@ -473,11 +474,13 @@ def end_session(
     except Exception:
         pass
 
-    # ── PATTERN LEARNING (single pass) ─────────
+    # ── PATTERN LEARNING (per-user, stateless) ─────────
     learning_data = _prepare_learning_data(log)
-    patterns = pattern_learner.update(learning_data)
-
     user = db.query(User).filter(User.id == session.user_id).first()
+    learner = PatternLearner()
+    previous_model = user.pattern_model if user else {}
+    patterns = learner.update(previous_model, learning_data)
+
     if user:
         user.pattern_model = patterns
     db.commit()

@@ -113,6 +113,9 @@ MemberSummary _summary(_Style s, List<MemberDay> week, DateTime now) {
         : 'low',
     lastActiveAt: last,
     inSession: last != null && now.difference(last).inMinutes < 12,
+    // last week, as far as today's weekday: steady people match it, the ones
+    // who skip breaks are creeping up
+    prevFocusMinutes: (week.fold(0, (a, d) => a + d.focusMinutes) * (0.82 + s.takes * 0.3)).round(),
   );
 }
 

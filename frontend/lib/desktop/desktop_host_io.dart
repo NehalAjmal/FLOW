@@ -236,6 +236,7 @@ class NativeDesktopHost with WindowListener, TrayListener implements DesktopHost
         if (_wasMaximized) {
           _wasMaximized = false;
           await _step('maximize again', windowManager.maximize);
+          await Future<void>.delayed(const Duration(milliseconds: 150)); // so the read-back below is the final size
         }
         await _step('show', () async {
           await windowManager.show();

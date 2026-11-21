@@ -6,6 +6,10 @@ from datetime import datetime
 # The activity agent sends a tick every 30s — used when timestamps are missing.
 TICK_MINUTES = 0.5
 
+# Cap accumulated history arrays to prevent unbounded JSON growth.
+MAX_HISTORY = 50
+MAX_HOURLY_SAMPLES = 100
+
 
 def _parse_ts(value):
     if not value:
@@ -17,55 +21,75 @@ def _parse_ts(value):
 
 
 class PatternLearner:
-    def __init__(self):
-        self.hourly_fatigue = defaultdict(list)
-        self.keystroke_history = []
-        self.switch_history = []
-        self.session_lengths = []
-        self.trough_history = []
+    """
+    Stateless learner.  Each call to update() takes the user's existing
+    pattern_model (from DB) plus the new session's signal log and returns
+    the updated model.  No instance state, no cross-user leakage.
+    """
 
     # ─────────────────────────────────────────────
     # MAIN UPDATE FUNCTION
     # ─────────────────────────────────────────────
 
-    def update(self, session_data: list) -> dict:
-
+    def update(self, previous_model: dict, session_data: list) -> dict:
+        """
+        previous_model : the user's current pattern_model from DB (or {})
+        session_data   : the signal log from the just-ended session,
+                         already converted by _prepare_learning_data()
+        Returns        : the updated pattern_model dict to store in DB
+        """
         if not session_data:
-            return self._empty_model()
+            return previous_model or self._empty_model()
 
-        timestamps = []
+        prev_params = (previous_model or {}).get("parameters", {})
+
+        # ── Recover accumulated history from previous model ──────────
+        session_lengths   = list(prev_params.get("_session_lengths", []))
+        trough_history    = list(prev_params.get("_trough_history", []))
+        keystroke_history = list(prev_params.get("_keystroke_history", []))
+        switch_history    = list(prev_params.get("_switch_history", []))
+        hourly_fatigue    = {
+            int(k): list(v)
+            for k, v in (prev_params.get("_hourly_fatigue") or {}).items()
+        }
+
+        # ── Process the new session ──────────────────────────────────
+        timestamps   = []
         fatigue_vals = []
-        keystrokes = []
-        switches = []
+        keystrokes   = []
+        switches     = []
 
         for point in session_data:
             timestamps.append(_parse_ts(point.get("timestamp")))
-            fatigue_vals.append(point.get("output", {}).get("fatigue", 0.0))
-
+            fatigue_vals.append(
+                point.get("output", {}).get("fatigue", 0.0)
+            )
             inp = point.get("input", {})
             keystrokes.append(inp.get("keystroke_count", 0))
             switches.append(inp.get("window_switches", 0))
 
-        # ── SESSION LENGTH (real minutes, not entry counts) ──
-        self.session_lengths.append(self._session_duration_minutes(timestamps))
+        # Session length (real minutes)
+        session_lengths.append(self._session_duration_minutes(timestamps))
 
-        # ── HOURLY FATIGUE PROFILE ───────────────
+        # Hourly fatigue profile
         for t, f in zip(timestamps, fatigue_vals):
             hour = t.hour if t else datetime.utcnow().hour
-            self.hourly_fatigue[hour].append(f)
+            hourly_fatigue.setdefault(hour, []).append(f)
 
-        # ── BASELINES ────────────────────────────
-        avg_kpm = float(np.mean(keystrokes)) if keystrokes else 0
-        avg_switch = float(np.mean(switches)) if switches else 0
+        # Baselines
+        avg_kpm    = float(np.mean(keystrokes)) if keystrokes else 0
+        avg_switch = float(np.mean(switches))   if switches   else 0
+        keystroke_history.append(avg_kpm)
+        switch_history.append(avg_switch)
 
-        self.keystroke_history.append(avg_kpm)
-        self.switch_history.append(avg_switch)
-
-        #  COMPUTE TROUGH FOR THIS SESSION
+        # Trough
         trough = self._compute_trough_minute(session_data, timestamps)
-        self.trough_history.append(trough)
+        trough_history.append(trough)
 
-        return self._export_model()
+        return self._export_model(
+            hourly_fatigue, session_lengths,
+            keystroke_history, switch_history, trough_history,
+        )
 
     # ─────────────────────────────────────────────
     # SESSION DURATION
@@ -76,7 +100,6 @@ class PatternLearner:
         if len(valid) >= 2:
             span = (max(valid) - min(valid)).total_seconds() / 60.0
             if span > 0:
-                # Add one tick so the last entry is counted
                 return round(span + TICK_MINUTES, 1)
         return round(len(parsed_timestamps) * TICK_MINUTES, 1)
 
@@ -84,12 +107,13 @@ class PatternLearner:
     # EXPORT MODEL
     # ─────────────────────────────────────────────
 
-    def _export_model(self) -> dict:
+    def _export_model(self, hourly_fatigue, session_lengths,
+                      keystroke_history, switch_history, trough_history):
 
         # fatigue profile
         avg = {
             h: np.mean(v)
-            for h, v in self.hourly_fatigue.items()
+            for h, v in hourly_fatigue.items()
             if len(v) >= 3
         }
 
@@ -102,27 +126,38 @@ class PatternLearner:
         else:
             fatigue_profile = {}
 
-        # ultradian cycle — median session length in MINUTES (defaults to 90 until learned)
-        if len(self.session_lengths) >= 3:
-            cycle = max(25, int(np.median(self.session_lengths)))
+        # ultradian cycle — median session length in MINUTES
+        if len(session_lengths) >= 3:
+            cycle = max(25, int(np.median(session_lengths)))
         else:
             cycle = 90
 
         # baselines
-        baseline_kpm = float(np.mean(self.keystroke_history)) if self.keystroke_history else 0
-        baseline_switch = float(np.mean(self.switch_history)) if self.switch_history else 0
+        baseline_kpm    = float(np.mean(keystroke_history)) if keystroke_history else 0
+        baseline_switch = float(np.mean(switch_history))    if switch_history    else 0
 
-        #  FINAL TROUGH (learned over sessions)
-        trough_minute = int(np.median(self.trough_history)) if self.trough_history else 45
+        # trough (learned over sessions)
+        trough_minute = int(np.median(trough_history)) if trough_history else 45
 
         return {
-            "schema_version": "learning_v2",
+            "schema_version": "learning_v3",
             "parameters": {
-                "fatigue_focus_profile": fatigue_profile,
-                "ultradian_cycle_minutes": cycle,
+                "fatigue_focus_profile":       fatigue_profile,
+                "ultradian_cycle_minutes":     cycle,
                 "baseline_keystrokes_per_min": round(baseline_kpm, 2),
-                "baseline_window_switches": round(baseline_switch, 2),
-                "trough_minute": trough_minute
+                "baseline_window_switches":    round(baseline_switch, 2),
+                "trough_minute":               trough_minute,
+                # Private accumulated history (survives restarts).
+                # Prefixed with _ so they are clearly internal.
+                # The frontend ignores unknown fields (CONTRACT_NOTES rule).
+                "_session_lengths":   session_lengths[-MAX_HISTORY:],
+                "_trough_history":    trough_history[-MAX_HISTORY:],
+                "_keystroke_history": keystroke_history[-MAX_HISTORY:],
+                "_switch_history":    switch_history[-MAX_HISTORY:],
+                "_hourly_fatigue": {
+                    str(h): v[-MAX_HOURLY_SAMPLES:]
+                    for h, v in hourly_fatigue.items()
+                },
             }
         }
 
@@ -150,7 +185,7 @@ class PatternLearner:
 
         trough_idx = min(scores, key=lambda x: x[1])[0]
 
-        # Convert the entry index to minutes using real tick spacing when possible
+        # Convert the entry index to minutes using real tick spacing
         if parsed_timestamps:
             valid = [t for t in parsed_timestamps if t is not None]
             if len(valid) >= 2 and trough_idx < len(parsed_timestamps):

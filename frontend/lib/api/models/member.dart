@@ -18,11 +18,8 @@ class NudgeResponses {
 
   int get total => taken + snoozed + dismissed;
 
-  factory NudgeResponses.fromJson(Json j) => NudgeResponses(
-    taken: intOrNull(j['taken']) ?? 0,
-    snoozed: intOrNull(j['snoozed']) ?? 0,
-    dismissed: intOrNull(j['dismissed']) ?? 0,
-  );
+  factory NudgeResponses.fromJson(Json j) =>
+      NudgeResponses(taken: intOrNull(j['taken']) ?? 0, snoozed: intOrNull(j['snoozed']) ?? 0, dismissed: intOrNull(j['dismissed']) ?? 0);
 }
 
 /// One person's week at a glance (a row on the People page).
@@ -38,7 +35,12 @@ class MemberSummary {
     required this.strain,
     this.lastActiveAt,
     this.inSession = false,
+    this.prevFocusMinutes,
   });
+
+  /// Focus minutes in the week before this one (for "vs last week"); null
+  /// when the server does not send it or the person is new.
+  final int? prevFocusMinutes;
 
   final String id;
   final String name;
@@ -56,6 +58,15 @@ class MemberSummary {
   final bool inSession;
 
   int get focusMinutes => focusByDay.fold(0, (a, b) => a + b);
+
+  /// Days with any focus this week.
+  int get daysActive => focusByDay.where((m) => m > 0).length;
+
+  /// Change against last week in minutes; null when unknown.
+  int? get focusDelta => prevFocusMinutes == null ? null : focusMinutes - prevFocusMinutes!;
+
+  /// Share of break suggestions answered with a break (0..1); null with none.
+  double? get breakUptake => breaksSuggested == 0 ? null : breaksTaken / breaksSuggested;
   int get strainRank => switch (strain) {
     'high' => 2,
     'moderate' => 1,
@@ -75,6 +86,7 @@ class MemberSummary {
       strain: str(j['strain']) ?? 'low',
       lastActiveAt: dateOrNull(j['last_active_at']),
       inSession: boolOr(j['in_session'], false),
+      prevFocusMinutes: intOrNull(j['prev_focus_minutes']),
     );
   }
 }
@@ -122,6 +134,86 @@ class MemberDetail {
 
   /// Break pressure 0..1 per day, last 14 days.
   final List<TrendPoint> strainTrend;
+
+  // ── worked out here from [days]: no extra fields for the server to send ──
+
+  Iterable<MemberSession> get _sessions => days.expand((d) => d.sessions);
+
+  /// Minutes of focus in each hour of the day (0..23), over the week.
+  List<int> get focusByHour {
+    final out = List<int>.filled(24, 0);
+    for (final s in _sessions) {
+      var t = s.start;
+      while (t.isBefore(s.end)) {
+        final next = DateTime(t.year, t.month, t.day, t.hour + 1);
+        final upto = next.isBefore(s.end) ? next : s.end;
+        out[t.hour] += upto.difference(t).inMinutes;
+        t = upto;
+      }
+    }
+    return out;
+  }
+
+  /// Focus minutes by demand: light, moderate, heavy.
+  ({int light, int moderate, int heavy}) get demandMix {
+    var l = 0, m = 0, h = 0;
+    for (final s in _sessions) {
+      final mins = s.end.difference(s.start).inMinutes;
+      switch (s.demand) {
+        case Demand.light:
+          l += mins;
+        case Demand.moderate:
+          m += mins;
+        default:
+          h += mins;
+      }
+    }
+    return (light: l, moderate: m, heavy: h);
+  }
+
+  /// Mean session length in minutes (0 with no sessions).
+  int get averageSessionMinutes {
+    final all = _sessions.toList();
+    if (all.isEmpty) return 0;
+    return (all.fold(0, (a, s) => a + s.end.difference(s.start).inMinutes) / all.length).round();
+  }
+
+  /// The longest run of focus without a break taken, in minutes: back-to-back
+  /// sessions count as one stretch unless a break was taken between them.
+  int get longestStretchMinutes {
+    var best = 0;
+    for (final d in days) {
+      final taken = [for (final b in d.breaks) if (b.mark == BreakMark.taken) b.at];
+      final sessions = [...d.sessions]..sort((a, b) => a.start.compareTo(b.start));
+      var run = 0;
+      MemberSession? prev;
+      for (final s in sessions) {
+        final rested = prev != null && taken.any((t) => !t.isBefore(prev!.start) && !t.isAfter(s.start));
+        final gap = prev == null ? 0 : s.start.difference(prev.end).inMinutes;
+        if (prev == null || rested || gap > 45) run = 0; // a real pause resets it too
+        run += s.end.difference(s.start).inMinutes;
+        if (run > best) best = run;
+        prev = s;
+      }
+    }
+    return best;
+  }
+
+  /// Typical first start and last end on working days, as minutes after
+  /// midnight; null with no sessions.
+  ({int start, int end})? get usualHours {
+    final starts = <int>[], ends = <int>[];
+    for (final d in days) {
+      if (d.sessions.isEmpty) continue;
+      final first = d.sessions.map((s) => s.start).reduce((a, b) => a.isBefore(b) ? a : b);
+      final last = d.sessions.map((s) => s.end).reduce((a, b) => a.isAfter(b) ? a : b);
+      starts.add(first.hour * 60 + first.minute);
+      ends.add(last.hour * 60 + last.minute);
+    }
+    if (starts.isEmpty) return null;
+    int mean(List<int> v) => (v.reduce((a, b) => a + b) / v.length).round();
+    return (start: mean(starts), end: mean(ends));
+  }
 
   factory MemberDetail.fromJson(Json j) => MemberDetail(
     summary: MemberSummary.fromJson(asJson(j['summary'])),

@@ -55,7 +55,6 @@ class _AppearState extends State<Appear> with SingleTickerProviderStateMixin {
   );
 }
 
-
 /// Entrances play on a page's first visit only. Going back to a page you've
 /// seen shows it settled; replaying the cascade on every switch reads as
 /// jitter, not as arrival. Decided once per visit, so content that arrives

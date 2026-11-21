@@ -1,12 +1,14 @@
 import 'dart:math' as math;
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/api_connector.dart';
+
 import 'package:go_router/go_router.dart';
 
+import '../api/models/member.dart';
 import '../api/models/team.dart';
 import '../router/routes.dart';
 import '../state/data_providers.dart';
@@ -101,6 +103,8 @@ class TeamScreen extends ConsumerWidget {
                       ),
                     ),
                   ),
+                  const SizedBox(height: 18),
+                  _TeamTypicalDay(metrics: value.data!),
                 ],
               ),
               AsyncError(:final error) => InlineError(message: errorText(error), onRetry: () => ref.invalidate(teamSummaryProvider)),
@@ -509,11 +513,7 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
             FlowHeader(
               title: 'Team admin',
               subtitle: group == null ? 'The team as a whole' : 'Group of $group · the team as a whole',
-              action: Pressable(
-                tone: PressableTone.primary,
-                onPressed: () => context.go(Routes.adminPeople),
-                child: const Text('People'),
-              ),
+              action: Pressable(tone: PressableTone.primary, onPressed: () => context.go(Routes.adminPeople), child: const Text('People')),
             ),
             const SizedBox(height: 10),
             _TwoUp(
@@ -535,7 +535,7 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
                       Text(
                         value.suppressed
                             ? 'Hidden right now: fewer than ${Suppressible.minGroupSize} people share (now ${value.groupSize}).'
-                            : 'Everything here is an average over ${value.groupSize} people who chose to share.',
+                            : 'This page is the ${value.groupSize} people who share, taken together. Each of them has their own page under People.',
                         style: FlowType.note(p, size: 14, color: p.text1),
                       ),
                     ],
@@ -651,6 +651,8 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
                 ),
               ),
             ],
+            const SizedBox(height: 18),
+            const _TeamNumbers(),
             const SizedBox(height: 18),
             const _TwoUp(left: _Invites(), right: _Audit()),
           ],
@@ -840,6 +842,394 @@ class _SpinePainter extends CustomPainter {
   bool shouldRepaint(_SpinePainter o) => o.start != start || o.end != end || o.p != p;
 }
 
+// ── the team in numbers (admin) ─────────────────────────────────────────────
+
+/// Totals worked out from the people the admin can already see: this week's
+/// focus and how it compares with last week, how many break suggestions were
+/// taken, how focus is spread across people (one dot each; click one), and
+/// who is running hot. Nothing here that the People page does not hold.
+class _TeamNumbers extends ConsumerWidget {
+  const _TeamNumbers();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final p = FlowPalette.of(context);
+    final members = ref.watch(adminMembersProvider).value;
+    if (members == null || members.isEmpty) return const SizedBox.shrink();
+    final total = members.fold(0, (a, m) => a + m.focusMinutes);
+    final prev = members.every((m) => m.prevFocusMinutes != null) ? members.fold(0, (a, m) => a + m.prevFocusMinutes!) : null;
+    final delta = prev == null ? null : total - prev;
+    final taken = members.fold(0, (a, m) => a + m.breaksTaken), offered = members.fold(0, (a, m) => a + m.breaksSuggested);
+    final now = members.where((m) => m.inSession).length;
+    final hot = members.where((m) => m.strain == 'high').toList()..sort((a, b) => b.focusMinutes.compareTo(a.focusMinutes));
+    final sorted = [...members]..sort((a, b) => a.focusMinutes.compareTo(b.focusMinutes));
+    final median = sorted[sorted.length ~/ 2].focusMinutes;
+
+    Widget stat(String label, Widget big, String? sub) => Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SectionLabel(label),
+        const SizedBox(height: 4),
+        big,
+        if (sub != null) ...[const SizedBox(height: 2), Text(sub, style: FlowType.chart(p, size: 10.5, color: p.text2))],
+      ],
+    );
+
+    return _TwoUp(
+      flex: const (12, 8),
+      left: ColorField(
+        tone: FieldTone.planned,
+        padding: const EdgeInsets.fromLTRB(22, 18, 22, 18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const SectionLabel('The team in numbers · this week'),
+                const Spacer(),
+                Pressable(
+                  onPressed: () => context.go(Routes.adminPeople),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  child: const Text('Everyone'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 34,
+              runSpacing: 16,
+              children: [
+                stat(
+                  'Focus, all together',
+                  DurationNumeral(total, size: 30),
+                  '${flowDuration((total / members.length).round())} each on average'
+                      '${delta == null || delta.abs() < 30 ? '' : ' · ${delta > 0 ? '+' : '−'}${flowDuration(delta.abs())} vs last week'}',
+                ),
+                stat(
+                  'Breaks taken',
+                  TabularNumeral(offered == 0 ? '–' : '${(taken / offered * 100).round()}%', style: FlowType.numeral(p, 30)),
+                  '$taken of $offered suggested',
+                ),
+                stat('In a session now', TabularNumeral('$now', style: FlowType.numeral(p, 30)), 'of ${members.length} people'),
+              ],
+            ),
+            const SizedBox(height: 18),
+            const SectionLabel('How focus is spread · one dot per person'),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 46,
+              child: _SpreadStrip(members: sorted, median: median, onOpen: (m) => context.go(Routes.adminPerson(m.id))),
+            ),
+          ],
+        ),
+      ),
+      right: ColorField(
+        tone: FieldTone.rest,
+        padding: const EdgeInsets.fromLTRB(22, 18, 22, 18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SectionLabel('Running hot'),
+            const SizedBox(height: 4),
+            Text(
+              hot.isEmpty
+                  ? 'Nobody is under high break pressure this week.'
+                  : 'High break pressure: long stretches and suggestions passed over. Worth a conversation, not a verdict.',
+              style: FlowType.note(p, size: 13.5),
+            ),
+            const SizedBox(height: 10),
+            for (final m in hot.take(4))
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Pressable(
+                  onPressed: () => context.go(Routes.adminPerson(m.id)),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  semanticLabel: 'Open ${m.name}',
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 7,
+                        height: 7,
+                        decoration: BoxDecoration(color: p.amber, shape: BoxShape.circle),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(child: Text(m.name, maxLines: 1, overflow: TextOverflow.ellipsis)),
+                      Text(
+                        '${flowDuration(m.focusMinutes)} · ${m.breaksTaken}/${m.breaksSuggested} breaks',
+                        style: FlowType.chart(p, size: 10.5, color: p.text2),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Everyone on one line by their focus this week: a dot per person, a tick at
+/// the median. Hover a dot for the name, click to open the person.
+class _SpreadStrip extends StatefulWidget {
+  const _SpreadStrip({required this.members, required this.median, required this.onOpen});
+  final List<MemberSummary> members; // sorted by focus
+  final int median;
+  final void Function(MemberSummary) onOpen;
+
+  @override
+  State<_SpreadStrip> createState() => _SpreadStripState();
+}
+
+class _SpreadStripState extends State<_SpreadStrip> {
+  int? _hover;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = FlowPalette.of(context);
+    final lo = widget.members.first.focusMinutes, hi = math.max(widget.members.last.focusMinutes, lo + 1);
+    return LayoutBuilder(
+      builder: (context, box) {
+        const pad = 10.0;
+        double x(int minutes) => pad + (box.maxWidth - pad * 2) * (minutes - lo) / (hi - lo);
+        int? at(Offset o) {
+          int? best;
+          var bd = 14.0;
+          for (final (i, m) in widget.members.indexed) {
+            final d = (x(m.focusMinutes) - o.dx).abs();
+            if (d < bd) {
+              bd = d;
+              best = i;
+            }
+          }
+          return best;
+        }
+
+        final h = _hover;
+        return MouseRegion(
+          cursor: h != null ? SystemMouseCursors.click : SystemMouseCursors.basic,
+          onHover: (e) {
+            final i = at(e.localPosition);
+            if (i != _hover) setState(() => _hover = i);
+          },
+          onExit: (_) => setState(() => _hover = null),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTapUp: (e) {
+              final i = at(e.localPosition);
+              if (i != null) widget.onOpen(widget.members[i]);
+            },
+            child: Semantics(
+              label:
+                  'Focus this week from ${flowDuration(lo)} to ${flowDuration(hi)}, median ${flowDuration(widget.median)}, '
+                  '${widget.members.length} people',
+              child: CustomPaint(
+                size: Size.infinite,
+                painter: _SpreadPainter(
+                  p,
+                  [for (final m in widget.members) x(m.focusMinutes)],
+                  x(widget.median),
+                  h,
+                  h == null ? null : '${widget.members[h].name} · ${flowDuration(widget.members[h].focusMinutes)}',
+                  flowDuration(lo),
+                  flowDuration(hi),
+                  [for (final m in widget.members) m.strain == 'high'],
+                  MediaQuery.textScalerOf(context),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _SpreadPainter extends CustomPainter {
+  _SpreadPainter(this.p, this.xs, this.medianX, this.hover, this.label, this.lo, this.hi, this.hot, this.scaler);
+  final FlowPalette p;
+  final List<double> xs;
+  final double medianX;
+  final int? hover;
+  final String? label;
+  final String lo, hi;
+  final List<bool> hot;
+  final TextScaler scaler;
+
+  @override
+  void paint(Canvas c, Size s) {
+    final y = 16.0;
+    c.drawLine(Offset(0, y), Offset(s.width, y), Paint()..color = p.hairline);
+    c.drawLine(
+      Offset(medianX, y - 9),
+      Offset(medianX, y + 9),
+      Paint()
+        ..color = p.text2
+        ..strokeWidth = 1.5,
+    );
+    for (final (i, x) in xs.indexed) {
+      c.drawCircle(Offset(x, y), i == hover ? 6 : 4.4, Paint()..color = hot[i] ? p.amber : (i == hover ? p.text1 : p.pastHeavy));
+    }
+    TextPainter tp(String t, {Color? color}) => TextPainter(
+      text: TextSpan(
+        text: t,
+        style: FlowType.chart(p, size: 10.5, color: color),
+      ),
+      textDirection: TextDirection.ltr,
+      textScaler: scaler,
+    )..layout();
+    final a = tp(lo), b = tp(hi);
+    if (label == null) {
+      a.paint(c, Offset(0, s.height - a.height));
+      b.paint(c, Offset(s.width - b.width, s.height - b.height));
+      final m = tp('median');
+      m.paint(c, Offset((medianX - m.width / 2).clamp(a.width + 8, s.width - b.width - m.width - 8), s.height - m.height));
+    } else {
+      final l = tp(label!, color: p.text1);
+      l.paint(c, Offset((xs[hover!] - l.width / 2).clamp(0.0, s.width - l.width), s.height - l.height));
+    }
+  }
+
+  @override
+  bool shouldRepaint(_SpreadPainter o) => o.hover != hover || o.xs != xs || o.p != p || o.label != label;
+}
+
+// ── a typical day (team page: averages only) ───────────────────────────────
+
+/// What a day on this team looks like on average, and where you sit against
+/// it. Every number is a team average; your own figure is yours alone.
+class _TeamTypicalDay extends ConsumerWidget {
+  const _TeamTypicalDay({required this.metrics});
+  final TeamMetrics metrics;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final p = FlowPalette.of(context);
+    final m = metrics;
+    if (m.focusMinutesPerDay == null && m.sessionsPerDay == null && m.breakUptake == null && m.peakHours.isEmpty) {
+      return const SizedBox.shrink(); // the server sends none of it yet
+    }
+    // your own week so far, from your own data
+    final mine = ref.watch(rollingMinutesProvider).value;
+    final today = DateTime.now();
+    final monday = DateTime(today.year, today.month, today.day).subtract(Duration(days: today.weekday - 1));
+    final myWeek = mine?.entries.where((e) => !e.key.isBefore(monday)).fold<int>(0, (a, e) => a + e.value);
+    final teamWeek = m.focusMinutesThisWeek;
+
+    Widget stat(String label, Widget big, String sub) => Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SectionLabel(label),
+        const SizedBox(height: 4),
+        big,
+        const SizedBox(height: 2),
+        Text(sub, style: FlowType.chart(p, size: 10.5, color: p.text2)),
+      ],
+    );
+
+    return _TwoUp(
+      left: ColorField(
+        tone: FieldTone.past,
+        padding: const EdgeInsets.fromLTRB(22, 18, 22, 18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SectionLabel('A typical day on this team'),
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 34,
+              runSpacing: 16,
+              children: [
+                if (m.focusMinutesPerDay != null)
+                  stat('Focus', DurationNumeral(m.focusMinutesPerDay!, size: 30), 'per person, per working day'),
+                if (m.sessionsPerDay != null)
+                  stat(
+                    'Sessions',
+                    TabularNumeral(m.sessionsPerDay!.toStringAsFixed(1), style: FlowType.numeral(p, 30)),
+                    'per person, per working day',
+                  ),
+                if (m.breakUptake != null)
+                  stat(
+                    'Breaks taken',
+                    TabularNumeral('${(m.breakUptake! * 100).round()}%', style: FlowType.numeral(p, 30)),
+                    'of the breaks Flow suggested',
+                  ),
+              ],
+            ),
+            if (m.peakHours.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              Text(
+                'The team focuses best around ${m.peakHours.map((h) => '$h:00').join(', ')}. Good hours to leave free of meetings.',
+                style: FlowType.note(p, size: 13.5),
+              ),
+            ],
+          ],
+        ),
+      ),
+      right: ColorField(
+        tone: FieldTone.now,
+        padding: const EdgeInsets.fromLTRB(22, 18, 22, 18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SectionLabel('You and the team · this week'),
+            const SizedBox(height: 14),
+            if (myWeek == null || teamWeek == null)
+              Text('Your own week appears here once it has loaded.', style: FlowType.note(p, size: 13.5))
+            else ...[
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Expanded(child: stat('You', DurationNumeral(myWeek, size: 30), 'so far')),
+                  Expanded(child: stat('Team average', DurationNumeral(teamWeek, size: 30), 'per person')),
+                ],
+              ),
+              const SizedBox(height: 14),
+              SizedBox(
+                height: 10,
+                child: CustomPaint(size: Size.infinite, painter: _YouVsTeamPainter(p, myWeek, teamWeek)),
+              ),
+              const SizedBox(height: 10),
+              Text('Only you see your own number here. The team sees the average.', style: FlowType.chart(p, size: 10.5, color: p.text2)),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Your week as a solid bar, the team's average as a tick on the same scale.
+class _YouVsTeamPainter extends CustomPainter {
+  _YouVsTeamPainter(this.p, this.mine, this.team);
+  final FlowPalette p;
+  final int mine, team;
+
+  @override
+  void paint(Canvas c, Size s) {
+    final top = math.max(math.max(mine, team), 1) * 1.15;
+    final r = RRect.fromRectAndRadius(Offset.zero & s, const Radius.circular(3));
+    c.drawRRect(r, Paint()..color = p.recess);
+    c.drawRRect(
+      RRect.fromRectAndRadius(Rect.fromLTWH(0, 0, s.width * mine / top, s.height), const Radius.circular(3)),
+      Paint()..color = p.accent,
+    );
+    final tx = s.width * team / top;
+    c.drawLine(
+      Offset(tx, -4),
+      Offset(tx, s.height + 4),
+      Paint()
+        ..color = p.text1
+        ..strokeWidth = 2,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_YouVsTeamPainter o) => o.mine != mine || o.team != team || o.p != p;
+}
+
 // ── invites + activity ──────────────────────────────────────────────────────
 
 class _Invites extends ConsumerStatefulWidget {
@@ -1021,15 +1411,12 @@ class _Audit extends ConsumerWidget {
                         children: [
                           SizedBox(width: 92, child: Text(loc.formatShortMonthDay(e.at), style: FlowType.chart(p, size: 10.5))),
                           Expanded(
-                            child: Text(
-                              switch (e.action) {
-                                'invite.create' => 'Created an invite',
-                                'invite.revoke' => 'Revoked an invite',
-                                'member.view' => "Opened a person's page",
-                                _ => e.action,
-                              },
-                              style: TextStyle(color: p.text1, fontSize: 13),
-                            ),
+                            child: Text(switch (e.action) {
+                              'invite.create' => 'Created an invite',
+                              'invite.revoke' => 'Revoked an invite',
+                              'member.view' => "Opened a person's page",
+                              _ => e.action,
+                            }, style: TextStyle(color: p.text1, fontSize: 13)),
                           ),
                           Text(e.actor, style: FlowType.chart(p, size: 10.5)),
                         ],

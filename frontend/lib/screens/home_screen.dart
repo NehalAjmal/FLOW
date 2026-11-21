@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -137,7 +137,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     return LayoutBuilder(
       builder: (context, viewport) {
         // Rule B: never look empty. The Score takes the room the window has.
-        final scoreH = (viewport.maxHeight - 96 - 52 - 300).clamp(320.0, 420.0);
+        // up to 640: on a tall window the Score grows instead of leaving an
+        // empty band under the deck
+        final scoreH = (viewport.maxHeight - 96 - 52 - 300).clamp(320.0, 640.0);
         return ListView(
           padding: const EdgeInsets.only(bottom: 24),
           children: [

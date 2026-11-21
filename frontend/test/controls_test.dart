@@ -2,7 +2,7 @@ import 'package:flow/theme/tokens.dart';
 import 'package:flow/ui/dial.dart';
 import 'package:flow/ui/drum_wheel.dart';
 import 'package:flow/ui/kit.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 

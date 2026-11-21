@@ -209,6 +209,13 @@ The frontend calls these (`ApiArea.admin`, mock by default; models in `models/me
   "strain_trend": [ { "date": "…", "value": 0.41 } ] } // 0..1 per day, last 14 days
 ```
 
+Added later, both optional (the UI hides what is missing):
+
+- `MemberSummary.prev_focus_minutes`: focus minutes in the week before this one, for "vs last week".
+- `/team/summary` `metrics` may also carry team-wide averages for the members' Team page: `focus_minutes_per_day`, `sessions_per_day`, `break_uptake` (0..1), `peak_hours` ([int]), `focus_minutes_this_week`. All averages over the group; still suppressed under 5.
+
+The person page's "when they focus", "kind of work", average session, longest stretch without a break and usual hours are worked out in the app from `days`; the server sends nothing extra for them. The admin overview's "team in numbers" is worked out from `/admin/members`.
+
 Rules the backend must enforce (the UI states them to users, so they are promises):
 
 1. **Admin role only**, and only for members of the admin's own team: 403 otherwise, 404 for an unknown id.

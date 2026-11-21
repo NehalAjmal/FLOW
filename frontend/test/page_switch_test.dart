@@ -7,7 +7,7 @@ import 'package:flow/state/auth_controller.dart';
 import 'package:flow/state/data_providers.dart';
 import 'package:flow/state/session_controller.dart';
 import 'package:flow/ui/loading_blocks.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -24,7 +24,11 @@ void main() {
     tester.view.physicalSize = const Size(1440, 900);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
-    final c = mockContainer(MockBackend(config: MockConfig(latency: latency, tick: const Duration(hours: 1))));
+    final c = mockContainer(
+      MockBackend(
+        config: MockConfig(latency: latency, tick: const Duration(hours: 1)),
+      ),
+    );
     await tester.pumpWidget(UncontrolledProviderScope(container: c, child: const FlowApp()));
     await tester.pump(const Duration(seconds: 4));
     await tester.runAsync(() => c.read(authProvider.notifier).login(email: 'solo@flow.dev', password: 'password'));
@@ -95,7 +99,8 @@ void main() {
     await go(tester, c, Routes.home);
     expect(find.byType(LoadingBlocks), findsNothing);
     await tester.runAsync(
-      () => c.read(liveSessionProvider.notifier).start(const StartSessionRequest(taskText: 'x', demand: Demand.moderate, plannedMinutes: 50)),
+      () =>
+          c.read(liveSessionProvider.notifier).start(const StartSessionRequest(taskText: 'x', demand: Demand.moderate, plannedMinutes: 50)),
     );
     c.read(appRouterProvider).go(Routes.home); // stay on Home (start navigates to the focus page)
     for (var i = 0; i < 10; i++) {
@@ -112,7 +117,9 @@ void devLoaderTests() {
     tester.view.physicalSize = const Size(1440, 900);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
-    final b = MockBackend(config: const MockConfig(latency: Duration.zero, tick: Duration(hours: 1)));
+    final b = MockBackend(
+      config: const MockConfig(latency: Duration.zero, tick: Duration(hours: 1)),
+    );
     final c = mockContainer(b);
     await tester.pumpWidget(UncontrolledProviderScope(container: c, child: const FlowApp()));
     await tester.pump(const Duration(seconds: 4));

@@ -35,12 +35,45 @@ class TrendPoint {
 }
 
 class TeamMetrics {
-  const TeamMetrics({required this.averageFocus, required this.trend});
+  const TeamMetrics({
+    required this.averageFocus,
+    required this.trend,
+    this.focusMinutesPerDay,
+    this.sessionsPerDay,
+    this.breakUptake,
+    this.peakHours = const [],
+    this.focusMinutesThisWeek,
+  });
   final double averageFocus;
   final List<TrendPoint> trend;
 
-  factory TeamMetrics.fromJson(Json j) =>
-      TeamMetrics(averageFocus: dblOrNull(j['average_focus']) ?? 0, trend: asJsonList(j['trend']).map(TrendPoint.fromJson).toList());
+  // Optional detail, all team-wide averages (never a person). Each is shown
+  // only when the server sends it.
+
+  /// Average focus minutes per person per working day.
+  final int? focusMinutesPerDay;
+
+  /// Average sessions per person per working day.
+  final double? sessionsPerDay;
+
+  /// Share of break suggestions the team answered with a break (0..1).
+  final double? breakUptake;
+
+  /// Hours of the day (0..23) when the team focuses most.
+  final List<int> peakHours;
+
+  /// Average focus minutes per person so far this week (for "you vs the team").
+  final int? focusMinutesThisWeek;
+
+  factory TeamMetrics.fromJson(Json j) => TeamMetrics(
+    averageFocus: dblOrNull(j['average_focus']) ?? 0,
+    trend: asJsonList(j['trend']).map(TrendPoint.fromJson).toList(),
+    focusMinutesPerDay: intOrNull(j['focus_minutes_per_day']),
+    sessionsPerDay: dblOrNull(j['sessions_per_day']),
+    breakUptake: dblOrNull(j['break_uptake']),
+    peakHours: intList(j['peak_hours']),
+    focusMinutesThisWeek: intOrNull(j['focus_minutes_this_week']),
+  );
 }
 
 class AdminSummary {

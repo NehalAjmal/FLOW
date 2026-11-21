@@ -3,7 +3,7 @@ import 'package:flow/app.dart';
 import 'package:flow/router/app_router.dart';
 import 'package:flow/router/routes.dart';
 import 'package:flow/state/auth_controller.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 

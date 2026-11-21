@@ -30,6 +30,7 @@ class User(Base):
     sessions:           Mapped[list["Session"]]          = relationship("Session",          back_populates="user", cascade="all, delete-orphan")
     biometric_readings: Mapped[list["BiometricReading"]] = relationship("BiometricReading", back_populates="user", cascade="all, delete-orphan")
     calendar_cache:     Mapped[list["CalendarCache"]]    = relationship("CalendarCache",    back_populates="user", cascade="all, delete-orphan")
+    refresh_tokens:     Mapped[list["RefreshToken"]]     = relationship("RefreshToken",     back_populates="user", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return f"<User {self.email} role={self.role}>"

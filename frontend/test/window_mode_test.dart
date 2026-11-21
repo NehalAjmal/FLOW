@@ -149,7 +149,9 @@ void main() {
 void devNudgeTests() {
   test('dev panel: "Send a nudge now" raises a nudge at once, even in the quiet scenario', () async {
     final host = FakeHost();
-    final b = MockBackend(config: const MockConfig(latency: Duration.zero, tick: Duration(hours: 1)))..scenario = MockScenario.quiet;
+    final b = MockBackend(
+      config: const MockConfig(latency: Duration.zero, tick: Duration(hours: 1)),
+    )..scenario = MockScenario.quiet;
     final c = ProviderContainer.test(overrides: [...mockOverrides(b), desktopHostProvider.overrideWithValue(host)], retry: (_, _) => null);
     c.listen(desktopPrefsProvider, (_, _) {});
     await c.read(desktopPrefsProvider.notifier).set(const DesktopPrefs(nudgeStyle: NudgeStyle.notification, autoMini: true));
@@ -247,8 +249,20 @@ void takeoverTests() {
   });
 
   test('window modes: which shapes float', () {
-    expect([for (final m in WindowMode.values) if (m.isFloating) m], [WindowMode.mini, WindowMode.card, WindowMode.nudge, WindowMode.nudgeFull]);
-    expect([for (final m in WindowMode.values) if (m.isTakeover) m], [WindowMode.nudge, WindowMode.nudgeFull]);
+    expect(
+      [
+        for (final m in WindowMode.values)
+          if (m.isFloating) m,
+      ],
+      [WindowMode.mini, WindowMode.card, WindowMode.nudge, WindowMode.nudgeFull],
+    );
+    expect(
+      [
+        for (final m in WindowMode.values)
+          if (m.isTakeover) m,
+      ],
+      [WindowMode.nudge, WindowMode.nudgeFull],
+    );
   });
 }
 

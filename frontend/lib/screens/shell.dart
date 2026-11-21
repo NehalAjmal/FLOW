@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -98,19 +98,21 @@ class AppShell extends ConsumerWidget {
               ),
             ],
           ),
-          // The nudge arrives and leaves; it never just appears. In: rises 28 px
-          // from the corner with a small overshoot while fading in. Out (taken,
-          // snoozed, dismissed): sinks back and fades, faster.
+          // The nudge arrives and leaves; it never just appears. In: drops 28 px
+          // into place under the header with a small overshoot while fading in.
+          // Out (taken, snoozed, dismissed): lifts back and fades, faster.
+          // Top right, not bottom right: at the bottom it sat on top of Home's
+          // session controls (Pause · Pop out · End).
           Positioned(
             right: 20,
-            bottom: 20,
+            top: 78,
             width: 400,
             child: AnimatedSwitcher(
               duration: const Duration(milliseconds: 460),
               reverseDuration: const Duration(milliseconds: 200),
               switchInCurve: Curves.easeOutBack,
               switchOutCurve: Curves.easeIn,
-              layoutBuilder: (current, previous) => Stack(alignment: Alignment.bottomRight, children: [...previous, ?current]),
+              layoutBuilder: (current, previous) => Stack(alignment: Alignment.topRight, children: [...previous, ?current]),
               transitionBuilder: (child, a) {
                 if (Motion.reduced(context)) return FadeTransition(opacity: a, child: child);
                 // `a` overshoots 1 (easeOutBack): clamp it for the opacity
@@ -120,8 +122,8 @@ class AppShell extends ConsumerWidget {
                   builder: (context, child) => Opacity(
                     opacity: (a.value / 0.6).clamp(0.0, 1.0),
                     child: Transform.translate(
-                      offset: Offset(0, 28 * (1 - a.value)),
-                      child: Transform.scale(scale: 0.94 + 0.06 * a.value, alignment: Alignment.bottomRight, child: child),
+                      offset: Offset(0, -28 * (1 - a.value)),
+                      child: Transform.scale(scale: 0.94 + 0.06 * a.value, alignment: Alignment.topRight, child: child),
                     ),
                   ),
                 );

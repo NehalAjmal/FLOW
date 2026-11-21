@@ -1,7 +1,7 @@
 import 'dart:math' as math;
 import 'dart:ui' show PathMetric;
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../theme/palette.dart';
 import 'wordmark_glyphs.dart';
@@ -89,11 +89,13 @@ class WordmarkPainter extends CustomPainter {
   static const _gap = 22.0;
 
   static final _dashCache = <int, List<({PathMetric metric, List<(double, Path)> dashes})>>{};
-  static List<({PathMetric metric, List<(double, Path)> dashes})> _dashesOf(int letter) =>
-      _dashCache.putIfAbsent(letter, () => [
-        for (final m in WordmarkLayout.letters[letter].computeMetrics())
-          (metric: m, dashes: [for (var s = 0.0; s < m.length; s += _dash + _gap) (s, m.extractPath(s, math.min(s + _dash, m.length)))]),
-      ]);
+  static List<({PathMetric metric, List<(double, Path)> dashes})> _dashesOf(int letter) => _dashCache.putIfAbsent(
+    letter,
+    () => [
+      for (final m in WordmarkLayout.letters[letter].computeMetrics())
+        (metric: m, dashes: [for (var s = 0.0; s < m.length; s += _dash + _gap) (s, m.extractPath(s, math.min(s + _dash, m.length)))]),
+    ],
+  );
 
   @override
   void paint(Canvas canvas, Size size) {
