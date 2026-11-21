@@ -238,20 +238,30 @@ def ingest_signal(
     current_minute = session_minutes
     trough_minute = live["trough_minute"]
 
+    trough_pressure = 0.0
+
     try:
         # ── ML SIGNALS ─────────────────────────
         engines = live["engines"]
-        deviation = engines["deviation"].compute(kpm, window_switches, idle_seconds)
+        deviation = engines["deviation"].compute(
+            keystrokes=keystroke_count,
+            switches=window_switches,
+            idle_seconds=idle_seconds,
+            declared_difficulty=session.declared_difficulty or "moderate",
+        )
         ultradian = engines["ultradian"].compute()
 
-        fatigue = fatigue_service.get_state().get("fatigue_score", 0.0)
+        fatigue = fatigue_service.get_state().get("fatigue_score")
 
-        # Biometric: real HR (watch or webcam rPPG) when available, otherwise webcam fatigue as proxy
+        # Use measured biometric data only; never substitute fatigue as a proxy.
         hr_hrv = _latest_hr_hrv(db, session_id)
-        if hr_hrv:
-            biometric = engines["biometric"].compute(hr=hr_hrv[0], hrv=hr_hrv[1])
+        if hr_hrv and hr_hrv[1] is not None:
+            biometric = engines["biometric"].compute(
+                hr=hr_hrv[0],
+                hrv=hr_hrv[1],
+            )
         else:
-            biometric = round(max(0.0, 1.0 - fatigue), 3)
+            biometric = None
 
         #  TROUGH PRESSURE
         trough_pressure = compute_trough_pressure(current_minute, trough_minute)
@@ -266,7 +276,15 @@ def ingest_signal(
         )
 
         new_state = decision["state"]
-        new_score = decision["focus_score"] * 100
+        focus_score = decision["focus_score"]
+        new_score = (
+            round(focus_score * 100, 2)
+            if focus_score is not None
+            else None
+        )
+
+        if new_score is None:
+            raise ValueError("Cannot score session: no signals available")
 
     except Exception as e:
         print(" fallback:", e)
