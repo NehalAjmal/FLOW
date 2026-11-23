@@ -154,14 +154,17 @@ class DecisionEngine:
         }
 
 
-def compute_trough_pressure(
-    current_minute,
-    trough_minute,
-):
+
+def compute_trough_pressure(current_minute, trough_minute):
+
     if trough_minute <= 0:
         return 0.0
 
     distance = trough_minute - current_minute
+
+    # Predicted trough has passed.
+    if distance < 0:
+        return 0.0
 
     if distance > 20:
         return 0.0
