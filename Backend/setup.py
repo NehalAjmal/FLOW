@@ -88,6 +88,7 @@ def create_tables():
     import db_models.refresh_token   # noqa
     import db_models.intervention    # noqa
     import db_models.user_settings   # noqa
+    import db_models.rating          # noqa
 
     engine = create_engine(DATABASE_URL)
     Base.metadata.create_all(bind=engine)

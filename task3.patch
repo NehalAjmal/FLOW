@@ -1,0 +1,757 @@
+diff --git a/Backend/breaks_app/__init__.py b/Backend/breaks_app/__init__.py
+new file mode 100644
+index 0000000..e2b0e75
+--- /dev/null
++++ b/Backend/breaks_app/__init__.py
+@@ -0,0 +1 @@
++# breaks_app: Task 3 break tracking
+diff --git a/Backend/breaks_app/router.py b/Backend/breaks_app/router.py
+new file mode 100644
+index 0000000..3d72ca7
+--- /dev/null
++++ b/Backend/breaks_app/router.py
+@@ -0,0 +1,115 @@
++# breaks_app/router.py
++# Shapes from frontend/CONTRACT_NOTES.md section 4 (and /session/{id}/resumption from section 3).
++
++from datetime import datetime, timezone
++from typing import Literal, Optional
++
++from fastapi import APIRouter, Depends, HTTPException
++from pydantic import BaseModel, Field
++from sqlalchemy.orm import Session as DBSession
++
++from auth.dependencies import get_current_user
++from breaks_app import service
++from db_models.base import get_db
++from db_models.breaks import Break
++from db_models.session import Session
++from db_models.user import User
++
++router = APIRouter()
++
++
++class BreakStartRequest(BaseModel):
++    session_id: str
++    intervention_id: Optional[str] = None     # set when the break came from a prompt
++
++
++class BreakEndRequest(BaseModel):
++    actual_minutes: Optional[int] = Field(default=None, ge=0, le=240)
++
++
++class RatingRequest(BaseModel):
++    session_id: str
++    kind: Literal["focus", "fatigue", "post_break_focus"]
++    value: int = Field(ge=1, le=5)
++    context_id: Optional[str] = None
++
++
++class ResumptionRequest(BaseModel):
++    break_id: str
++    seconds_to_first_edit: float = Field(ge=0, le=3600)
++
++
++def _now() -> datetime:
++    return datetime.now(timezone.utc)
++
++
++def _own_session(db: DBSession, session_id: str, user: User) -> Session:
++    s = db.get(Session, session_id)
++    if s is None or s.user_id != user.id:
++        raise HTTPException(status_code=404, detail="Session not found")
++    return s
++
++
++def _own_break(db: DBSession, break_id: str, user: User) -> Break:
++    b = db.get(Break, break_id)
++    if b is None or b.session.user_id != user.id:
++        raise HTTPException(status_code=404, detail="Break not found")
++    return b
++
++
++def _live(action: str, session_id: str) -> None:
++    # Lazy import: sessions.service loads the camera/ML code (see interventions/router.py).
++    from sessions import service as sessions_service
++    getattr(sessions_service, action)(session_id)
++
++
++@router.post("/breaks/start")
++def start(payload: BreakStartRequest, db: DBSession = Depends(get_db),
++          current_user: User = Depends(get_current_user)):
++    session = _own_session(db, payload.session_id, current_user)
++    try:
++        row = service.start_break(db, session, payload.intervention_id, _now())
++    except service.BreakError as e:
++        raise HTTPException(status_code=409, detail=str(e))
++    _live("clear_live_intervention", session.id)
++    return {"break_id": row.id}
++
++
++@router.post("/breaks/{break_id}/end")
++def end(break_id: str, payload: BreakEndRequest, db: DBSession = Depends(get_db),
++        current_user: User = Depends(get_current_user)):
++    row = _own_break(db, break_id, current_user)
++    try:
++        service.end_break(db, row, payload.actual_minutes, _now())
++    except service.BreakError as e:
++        raise HTTPException(status_code=409, detail=str(e))
++    _live("reset_ultradian", row.session_id)
++    # Restoration needs a few minutes of work after the break, so it is usually still null here.
++    return {"restoration_score": row.restoration_score}
++
++
++@router.get("/breaks")
++def list_breaks(session_id: str, db: DBSession = Depends(get_db),
++                current_user: User = Depends(get_current_user)):
++    _own_session(db, session_id, current_user)
++    return service.summary(db, session_id)
++
++
++@router.post("/ratings")
++def rate(payload: RatingRequest, db: DBSession = Depends(get_db),
++         current_user: User = Depends(get_current_user)):
++    _own_session(db, payload.session_id, current_user)
++    row = service.add_rating(db, current_user.id, payload.session_id, payload.kind,
++                             payload.value, payload.context_id, _now())
++    return {"id": row.id}
++
++
++@router.post("/session/{session_id}/resumption")
++def resumption(session_id: str, payload: ResumptionRequest, db: DBSession = Depends(get_db),
++               current_user: User = Depends(get_current_user)):
++    _own_session(db, session_id, current_user)
++    row = _own_break(db, payload.break_id, current_user)
++    if row.session_id != session_id:
++        raise HTTPException(status_code=404, detail="Break not found")
++    service.record_resumption(db, row, payload.seconds_to_first_edit)
++    return {"status": "ok"}
+diff --git a/Backend/breaks_app/service.py b/Backend/breaks_app/service.py
+new file mode 100644
+index 0000000..b906150
+--- /dev/null
++++ b/Backend/breaks_app/service.py
+@@ -0,0 +1,209 @@
++# breaks_app/service.py
++# Task 3: break tracking, the study's main measure.
++#   start / end a break
++#   restoration estimate: was behaviour more on-task after the break than before?
++#   resumption lag: how long until the user typed again after the break
++#   focus ratings: 1-5 self-reports
++
++from datetime import datetime, timezone
++from statistics import mean
++from typing import List, Optional
++
++from sqlalchemy.orm import Session as DBSession
++
++from db_models.breaks import Break
++from db_models.intervention import Intervention
++from db_models.rating import Rating
++from db_models.session import Session
++from engine.deviation import DeviationEngine
++
++WINDOW_TICKS = 6          # 6 ticks x 30 s = 3 minutes before and after a break
++BREAK_PROMPT_KINDS = {"trough", "fatigue"}   # prompts whose action is "take a break"
++
++
++class BreakError(Exception):
++    pass
++
++
++def _aware(dt: Optional[datetime]) -> Optional[datetime]:
++    if dt is None:
++        return None
++    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
++
++
++def _tick_time(entry: dict) -> Optional[datetime]:
++    """Server receive time of a signal_log entry ('at'). Older entries don't have it."""
++    at = entry.get("at")
++    return _aware(datetime.fromisoformat(at)) if at else None
++
++
++def active_break(db: DBSession, session_id: str) -> Optional[Break]:
++    return (
++        db.query(Break)
++        .filter(Break.session_id == session_id, Break.taken.is_(True), Break.ended_at.is_(None))
++        .first()
++    )
++
++
++def user_on_break(db: DBSession, user_id: str) -> bool:
++    hit = (
++        db.query(Break.id)
++        .join(Session, Session.id == Break.session_id)
++        .filter(Session.user_id == user_id, Break.taken.is_(True), Break.ended_at.is_(None))
++        .first()
++    )
++    return hit is not None
++
++
++# ── windows of behaviour around a break ──────────────────
++
++def ticks_before(log: List[dict], moment: datetime) -> List[dict]:
++    return [e for e in log if _tick_time(e) and _tick_time(e) < moment][-WINDOW_TICKS:]
++
++
++def ticks_after(log: List[dict], moment: datetime) -> List[dict]:
++    return [e for e in log if _tick_time(e) and _tick_time(e) >= moment][:WINDOW_TICKS]
++
++
++def window_deviation(ticks: List[dict], difficulty: str) -> float:
++    """Mridul's deviation score averaged over a window (0 = on task, 1 = off task)."""
++    engine = DeviationEngine()
++    score = 0.0
++    for e in ticks:
++        score = engine.compute(
++            keystrokes=e.get("keystrokes", 0),
++            switches=e.get("switches", 0),
++            idle_seconds=e.get("idle", 0),
++            declared_difficulty=difficulty,
++        )
++    return score   # the engine returns the running mean of everything it has seen
++
++
++def restoration_from(dev_before: float, dev_after: float) -> float:
++    """0.5 = no change, above 0.5 = more on-task after the break, below = less."""
++    return round(min(1.0, max(0.0, 0.5 + (dev_before - dev_after) / 2)), 3)
++
++
++# ── start / end ───────────────────────────────────────────
++
++def start_break(db: DBSession, session: Session, intervention_id: Optional[str], now: datetime) -> Break:
++    if session.end_time is not None:
++        raise BreakError("session has ended")
++    if active_break(db, session.id):
++        raise BreakError("a break is already running")
++
++    suggested_at = None
++    if intervention_id:
++        prompt = db.get(Intervention, intervention_id)
++        if prompt is None or prompt.session_id != session.id:
++            raise BreakError("intervention does not belong to this session")
++        suggested_at = prompt.shown_at
++
++    before = ticks_before(session.signal_log or [], now)
++    row = Break(
++        session_id=session.id,
++        intervention_id=intervention_id,
++        suggested_at=suggested_at,
++        taken=True,
++        taken_at=now,
++        keystrokes_before=mean(e.get("keystrokes", 0) for e in before) if before else None,
++        switches_before=mean(e.get("switches", 0) for e in before) if before else None,
++    )
++    db.add(row)
++    db.commit()
++    db.refresh(row)
++    return row
++
++
++def end_break(db: DBSession, row: Break, actual_minutes: Optional[int], now: datetime) -> Break:
++    if row.ended_at is not None:
++        raise BreakError("break already ended")
++    row.ended_at = now
++    if actual_minutes is not None:
++        row.duration_actual_min = actual_minutes
++    else:
++        row.duration_actual_min = round((now - _aware(row.taken_at)).total_seconds() / 60)
++    db.commit()
++    return row
++
++
++# ── filled in later, once the user is back at work ───────
++
++def update_pending(db: DBSession, session: Session) -> None:
++    """Called on every agent tick. Fills in restoration and resumption lag
++    for ended breaks once enough post-break ticks exist. Does not commit."""
++    log = session.signal_log or []
++    pending = (
++        db.query(Break)
++        .filter(Break.session_id == session.id, Break.ended_at.isnot(None),
++                (Break.restoration_score.is_(None)) | (Break.resumption_lag_sec.is_(None)))
++        .all()
++    )
++    for b in pending:
++        ended = _aware(b.ended_at)
++        after = ticks_after(log, ended)
++
++        if b.resumption_lag_sec is None:
++            first_typing = next((e for e in after if e.get("keystrokes", 0) > 0), None)
++            if first_typing is not None:
++                # 30-second ticks, so this is accurate to about 30 s
++                b.resumption_lag_sec = max(0.0, (_tick_time(first_typing) - ended).total_seconds())
++                b.resumption_source = "log"
++
++        if b.restoration_score is None and len(after) >= WINDOW_TICKS:
++            before = ticks_before(log, _aware(b.taken_at))
++            if before:
++                difficulty = session.declared_difficulty or "moderate"
++                b.restoration_score = restoration_from(
++                    window_deviation(before, difficulty), window_deviation(after, difficulty)
++                )
++                b.keystrokes_after = mean(e.get("keystrokes", 0) for e in after)
++                b.switches_after = mean(e.get("switches", 0) for e in after)
++
++
++def record_resumption(db: DBSession, row: Break, seconds: float) -> Break:
++    """The local agent measured it exactly (first keystroke after the break). Wins over the log estimate."""
++    row.resumption_lag_sec = seconds
++    row.resumption_source = "agent"
++    db.commit()
++    return row
++
++
++def add_rating(db: DBSession, user_id: str, session_id: str, kind: str, value: int,
++               context_id: Optional[str], now: datetime) -> Rating:
++    row = Rating(user_id=user_id, session_id=session_id, kind=kind, value=value,
++                 context_id=context_id, created_at=now)
++    db.add(row)
++    db.commit()
++    db.refresh(row)
++    return row
++
++
++def summary(db: DBSession, session_id: str) -> dict:
++    breaks = db.query(Break).filter(Break.session_id == session_id).order_by(Break.taken_at).all()
++    suggested = (
++        db.query(Intervention)
++        .filter(Intervention.session_id == session_id, Intervention.kind.in_(BREAK_PROMPT_KINDS))
++        .count()
++    )
++
++    def iso(dt):
++        return _aware(dt).isoformat() if dt else None
++
++    return {
++        "suggested": suggested,
++        "taken": sum(1 for b in breaks if b.taken),
++        "breaks": [
++            {
++                "break_id": b.id,
++                "started_at": iso(b.taken_at),
++                "ended_at": iso(b.ended_at),
++                "intervention_id": b.intervention_id,
++                "actual_minutes": b.duration_actual_min,
++                "restoration_score": b.restoration_score,
++                "resumption_lag_sec": b.resumption_lag_sec,
++                "resumption_source": b.resumption_source,
++            }
++            for b in breaks
++        ],
++    }
+diff --git a/Backend/db_models/__init__.py b/Backend/db_models/__init__.py
+index bd6d1cc..3b4aca4 100644
+--- a/Backend/db_models/__init__.py
++++ b/Backend/db_models/__init__.py
+@@ -9,6 +9,7 @@ from db_models.llm_cache      import LLMCache
+ from db_models.refresh_token  import RefreshToken
+ from db_models.intervention   import Intervention
+ from db_models.user_settings  import UserSettings
++from db_models.rating         import Rating
+ 
+ __all__ = [
+     "Base", "engine", "SessionLocal", "get_db",
+@@ -22,4 +23,5 @@ __all__ = [
+     "RefreshToken",
+     "Intervention",
+     "UserSettings",
++    "Rating",
+ ]
+\ No newline at end of file
+diff --git a/Backend/db_models/breaks.py b/Backend/db_models/breaks.py
+index 8bb44e9..c3f9806 100644
+--- a/Backend/db_models/breaks.py
++++ b/Backend/db_models/breaks.py
+@@ -28,6 +28,12 @@ class Break(Base):
+ 
+     restoration_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0-1
+ 
++    # Added for Task 3 (break tracking). Existing databases: run migrations/add_break_columns.py
++    ended_at:           Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
++    intervention_id:    Mapped[Optional[str]]      = mapped_column(String(36), nullable=True)
++    resumption_lag_sec: Mapped[Optional[float]]    = mapped_column(Float, nullable=True)
++    resumption_source:  Mapped[Optional[str]]      = mapped_column(String(10), nullable=True)  # agent | log
++
+     # Relationships
+     session: Mapped["Session"] = relationship("Session", back_populates="breaks")
+ 
+diff --git a/Backend/db_models/rating.py b/Backend/db_models/rating.py
+new file mode 100644
+index 0000000..342e81a
+--- /dev/null
++++ b/Backend/db_models/rating.py
+@@ -0,0 +1,21 @@
++from __future__ import annotations
++import uuid
++from datetime import datetime
++from typing import Optional
++from sqlalchemy import String, Integer, DateTime, ForeignKey
++from sqlalchemy.orm import Mapped, mapped_column
++from db_models.base import Base
++
++
++class Rating(Base):
++    """A 1-5 self-report: how focused / tired the user feels, e.g. before and after a break."""
++    __tablename__ = "ratings"
++
++    id:         Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
++    user_id:    Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
++    session_id: Mapped[str] = mapped_column(String(36), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False, index=True)
++
++    kind:       Mapped[str]           = mapped_column(String(20), nullable=False)   # focus | fatigue | post_break_focus
++    value:      Mapped[int]           = mapped_column(Integer, nullable=False)      # 1..5
++    context_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)    # e.g. the break id
++    created_at: Mapped[datetime]      = mapped_column(DateTime(timezone=True), nullable=False)
+diff --git a/Backend/interventions/service.py b/Backend/interventions/service.py
+index 09e1ae5..118c643 100644
+--- a/Backend/interventions/service.py
++++ b/Backend/interventions/service.py
+@@ -12,6 +12,7 @@ from db_models.intervention import Intervention
+ from db_models.session import Session
+ from db_models.user_settings import UserSettings
+ from interventions.gating import GateResult, check_gate
++from breaks_app.service import user_on_break
+ 
+ # Only these states lead to a prompt. deep_work and neutral are status
+ # messages, not prompts, so they never use up the 15-minute gap.
+@@ -69,7 +70,7 @@ def gate_for_user(db: DBSession, user_id: str, now: datetime) -> GateResult:
+     return check_gate(
+         now,
+         paused_until=_aware(s.paused_until),
+-        on_break=False,                      # TODO Task 3: True while a break is running
++        on_break=user_on_break(db, user_id),
+         in_meeting=in_meeting(db, user_id, now),
+         quiet_hours=quiet,
+         tz_name=s.timezone,
+diff --git a/Backend/main.py b/Backend/main.py
+index 44f3477..9bc3138 100644
+--- a/Backend/main.py
++++ b/Backend/main.py
+@@ -11,6 +11,7 @@ from admin.router    import router as admin_router
+ from biometric.router import router as biometric_router
+ from settings_app.router import router as settings_router
+ from interventions.router import router as intervention_router
++from breaks_app.router import router as breaks_router
+ 
+ app = FastAPI(
+     title="FLOW API",
+@@ -35,6 +36,7 @@ app.include_router(team_router,      prefix="/team",      tags=["Team"])
+ app.include_router(admin_router,     prefix="/admin",     tags=["Admin"])
+ app.include_router(biometric_router, prefix="/biometric", tags=["Biometric"])
+ app.include_router(intervention_router, prefix="/intervention", tags=["Intervention"])
++app.include_router(breaks_router,                          tags=["Breaks"])     # /breaks, /ratings, /session/{id}/resumption
+ app.include_router(settings_router,                        tags=["Settings"])
+ 
+ # ── Health ────────────────────────────────────────────────────────────────────
+diff --git a/Backend/migrations/__init__.py b/Backend/migrations/__init__.py
+new file mode 100644
+index 0000000..5848e02
+--- /dev/null
++++ b/Backend/migrations/__init__.py
+@@ -0,0 +1 @@
++# migrations: one-off database changes that create_all() can't do
+diff --git a/Backend/migrations/add_break_columns.py b/Backend/migrations/add_break_columns.py
+new file mode 100644
+index 0000000..76e4dcc
+--- /dev/null
++++ b/Backend/migrations/add_break_columns.py
+@@ -0,0 +1,33 @@
++# migrations/add_break_columns.py
++# create_all() never adds columns to a table that already exists,
++# so this adds Task 3's new break columns by hand. Safe to run twice:
++# it skips any column that is already there.
++#
++# Run from Backend:   python -m migrations.add_break_columns
++
++from sqlalchemy import inspect, text
++
++from db_models.base import engine
++
++NEW_COLUMNS = {
++    "ended_at":           "DATETIME NULL",
++    "intervention_id":    "VARCHAR(36) NULL",
++    "resumption_lag_sec": "FLOAT NULL",
++    "resumption_source":  "VARCHAR(10) NULL",
++}
++
++
++def run(bind=engine):
++    existing = {col["name"] for col in inspect(bind).get_columns("breaks")}
++    added = []
++    with bind.begin() as conn:          # begin() = one transaction, committed at the end
++        for name, ddl in NEW_COLUMNS.items():
++            if name not in existing:
++                conn.execute(text(f"ALTER TABLE breaks ADD COLUMN {name} {ddl}"))
++                added.append(name)
++    return added
++
++
++if __name__ == "__main__":
++    added = run()
++    print("added:", ", ".join(added) if added else "nothing, all columns already exist")
+diff --git a/Backend/sessions/service.py b/Backend/sessions/service.py
+index 32032ac..66db429 100644
+--- a/Backend/sessions/service.py
++++ b/Backend/sessions/service.py
+@@ -17,6 +17,8 @@ import os
+ import sys
+ from learning.engine import PatternLearner
+ from interventions.service import PROMPT_STATES, gate_for_user, record_intervention
++from breaks_app import service as breaks_service
++from db_models.breaks import Break
+  
+ 
+ #  FATIGUE SERVICE
+@@ -179,9 +181,16 @@ def _rehydrate_live(db: DBSession, session: Session) -> dict:
+ 
+     engines = _new_engines()
+     start = _as_aware_utc(session.start_time) or _utcnow()
+-    # Resume the ultradian clock from the real start time
++    # Resume the ultradian clock from the last break's end, or the session start
++    last_break = (
++        db.query(Break)
++        .filter(Break.session_id == session.id, Break.ended_at.isnot(None))
++        .order_by(Break.ended_at.desc())
++        .first()
++    )
++    clock_from = _as_aware_utc(last_break.ended_at) if last_break else start
+     engines["ultradian"] = UltradianEngine(cycle_minutes=cycle_minutes)
+-    engines["ultradian"].start_time = start.timestamp()
++    engines["ultradian"].start_time = clock_from.timestamp()
+ 
+     live = {
+         "state": "deep_work",
+@@ -342,6 +351,7 @@ def ingest_signal(
+ 
+     log.append({
+         "ts": timestamp,
++        "at": _utcnow().isoformat(),   # server time (UTC); breaks use it to find before/after ticks
+         "keystrokes": keystroke_count,
+         "switches": window_switches,
+         "idle": idle_seconds,
+@@ -356,11 +366,19 @@ def ingest_signal(
+     })
+ 
+     session.signal_log = log[-SIGNAL_LOG_CAP:]
++    breaks_service.update_pending(db, session)   # restoration + resumption lag, once there's data
+     db.commit()
+ 
+     return live
+ 
+ 
++def reset_ultradian(session_id: str) -> None:
++    """A break just ended: the ultradian clock starts again from now."""
++    live = _live_sessions.get(session_id)
++    if live:
++        live["engines"]["ultradian"].reset_after_break()
++
++
+ def clear_live_intervention(session_id: str) -> None:
+     """Take the answered prompt off the live screen state."""
+     live = _live_sessions.get(session_id)
+@@ -471,6 +489,10 @@ def end_session(
+     session.end_time = _utcnow()
+     session.self_rated_quality = self_rated_quality
+ 
++    running = breaks_service.active_break(db, session_id)
++    if running is not None:            # session ended mid-break: close the break too
++        breaks_service.end_break(db, running, None, session.end_time)
++
+     log = session.signal_log or []
+     scores = [entry.get("score", 75) for entry in log]
+ 
+diff --git a/Backend/setup.py b/Backend/setup.py
+index d2ad074..43727fa 100644
+--- a/Backend/setup.py
++++ b/Backend/setup.py
+@@ -88,6 +88,7 @@ def create_tables():
+     import db_models.refresh_token   # noqa
+     import db_models.intervention    # noqa
+     import db_models.user_settings   # noqa
++    import db_models.rating          # noqa
+ 
+     engine = create_engine(DATABASE_URL)
+     Base.metadata.create_all(bind=engine)
+diff --git a/Backend/tests/test_breaks.py b/Backend/tests/test_breaks.py
+new file mode 100644
+index 0000000..08a4e4c
+--- /dev/null
++++ b/Backend/tests/test_breaks.py
+@@ -0,0 +1,175 @@
++# Task 3: break tracking (start/end, ratings, restoration, resumption lag).
++from datetime import datetime, timedelta, timezone
++
++import pytest
++from fastapi import FastAPI
++from fastapi.testclient import TestClient
++from sqlalchemy import create_engine, text
++from sqlalchemy.orm import sessionmaker
++from sqlalchemy.pool import StaticPool
++
++import db_models  # noqa: registers every table
++from db_models.base import Base, get_db
++from db_models.breaks import Break
++from db_models.rating import Rating
++from db_models.session import Session
++from db_models.user import User
++from auth.dependencies import get_current_user
++from breaks_app import router as breaks_router_module
++from breaks_app import service
++from interventions import service as intervention_service
++from migrations import add_break_columns
++
++NOW = datetime(2026, 11, 24, 10, 0, tzinfo=timezone.utc)
++
++
++def tick(at, keystrokes=20, switches=1, idle=3):
++    return {"at": at.isoformat(), "keystrokes": keystrokes, "switches": switches, "idle": idle}
++
++
++@pytest.fixture
++def db():
++    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
++    Base.metadata.create_all(engine)
++    db = sessionmaker(bind=engine)()
++    db.add_all([
++        User(id="u1", full_name="Me", email="me@example.com", password_hash="x"),
++        User(id="u2", full_name="Someone Else", email="else@example.com", password_hash="x"),
++        Session(id="s1", user_id="u1", start_time=NOW - timedelta(hours=1),
++                declared_difficulty="moderate", signal_log=[]),
++        Session(id="s2", user_id="u2", start_time=NOW, signal_log=[]),
++    ])
++    db.commit()
++    yield db
++    db.close()
++
++
++@pytest.fixture
++def live_calls(monkeypatch):
++    seen = []
++    monkeypatch.setattr(breaks_router_module, "_live", lambda action, sid: seen.append((action, sid)))
++    return seen
++
++
++@pytest.fixture
++def client(db, live_calls):
++    app = FastAPI()
++    app.include_router(breaks_router_module.router)
++    app.dependency_overrides[get_db] = lambda: db
++    app.dependency_overrides[get_current_user] = lambda: db.get(User, "u1")
++    return TestClient(app)
++
++
++# ── start / end ──────────────────────────────────────────
++
++def test_start_and_end_a_break(client, db, live_calls):
++    r = client.post("/breaks/start", json={"session_id": "s1"})
++    assert r.status_code == 200
++    break_id = r.json()["break_id"]
++    assert intervention_service.gate_for_user(db, "u1", datetime.now(timezone.utc)).reason == "on_break"
++
++    r = client.post(f"/breaks/{break_id}/end", json={"actual_minutes": 5})
++    assert r.status_code == 200
++    b = db.get(Break, break_id)
++    assert b.ended_at is not None and b.duration_actual_min == 5
++    assert ("reset_ultradian", "s1") in live_calls          # ultradian clock restarts
++    assert intervention_service.gate_for_user(db, "u1", datetime.now(timezone.utc)).allowed
++
++
++def test_only_one_break_at_a_time(client):
++    client.post("/breaks/start", json={"session_id": "s1"})
++    assert client.post("/breaks/start", json={"session_id": "s1"}).status_code == 409
++
++
++def test_cannot_end_twice(client):
++    bid = client.post("/breaks/start", json={"session_id": "s1"}).json()["break_id"]
++    client.post(f"/breaks/{bid}/end", json={})
++    assert client.post(f"/breaks/{bid}/end", json={}).status_code == 409
++
++
++def test_break_from_a_prompt_counts_as_suggested_and_taken(client, db):
++    prompt = intervention_service.record_intervention(db, db.get(Session, "s1"), "trough", {}, 50.0, NOW)
++    client.post("/breaks/start", json={"session_id": "s1", "intervention_id": prompt.id})
++    summary = client.get("/breaks", params={"session_id": "s1"}).json()
++    assert summary["suggested"] == 1 and summary["taken"] == 1
++    assert summary["breaks"][0]["intervention_id"] == prompt.id
++
++
++def test_someone_elses_session_or_break_is_404(client, db):
++    assert client.post("/breaks/start", json={"session_id": "s2"}).status_code == 404
++    other = service.start_break(db, db.get(Session, "s2"), None, NOW)
++    assert client.post(f"/breaks/{other.id}/end", json={}).status_code == 404
++    assert client.get("/breaks", params={"session_id": "s2"}).status_code == 404
++
++
++# ── ratings ──────────────────────────────────────────────
++
++def test_ratings(client, db):
++    assert client.post("/ratings", json={"session_id": "s1", "kind": "post_break_focus",
++                                         "value": 4, "context_id": "b1"}).status_code == 200
++    assert db.query(Rating).count() == 1
++    assert client.post("/ratings", json={"session_id": "s1", "kind": "focus", "value": 6}).status_code == 422
++    assert client.post("/ratings", json={"session_id": "s1", "kind": "mood", "value": 3}).status_code == 422
++
++
++# ── restoration + resumption lag ─────────────────────────
++
++def _break_with_log(db, before_ticks, after_ticks, gap_minutes=5):
++    """Distracted or focused ticks before a break at NOW, then ticks after it ends."""
++    session = db.get(Session, "s1")
++    start = NOW
++    end = NOW + timedelta(minutes=gap_minutes)
++    log = [tick(start - timedelta(seconds=30 * (len(before_ticks) - i)), **t) for i, t in enumerate(before_ticks)]
++    session.signal_log = log
++    db.commit()
++    b = service.start_break(db, session, None, start)
++    service.end_break(db, b, None, end)
++    session.signal_log = log + [tick(end + timedelta(seconds=30 * (i + 1)), **t) for i, t in enumerate(after_ticks)]
++    service.update_pending(db, session)
++    db.commit()
++    return b
++
++
++DISTRACTED = dict(keystrokes=2, switches=7, idle=20)
++FOCUSED = dict(keystrokes=25, switches=0, idle=2)
++
++
++def test_restoration_high_when_focus_comes_back(db):
++    b = _break_with_log(db, [DISTRACTED] * 6, [FOCUSED] * 6)
++    assert b.restoration_score > 0.7
++    assert b.duration_actual_min == 5
++
++
++def test_restoration_low_when_still_distracted_after(db):
++    b = _break_with_log(db, [FOCUSED] * 6, [DISTRACTED] * 6)
++    assert b.restoration_score < 0.3
++
++
++def test_restoration_waits_for_enough_ticks(db):
++    b = _break_with_log(db, [DISTRACTED] * 6, [FOCUSED] * 3)
++    assert b.restoration_score is None          # only 1.5 min of data after the break
++
++
++def test_resumption_lag_from_log(db):
++    idle = dict(keystrokes=0, switches=0, idle=30)
++    b = _break_with_log(db, [FOCUSED] * 6, [idle, idle, FOCUSED])
++    assert b.resumption_lag_sec == 90 and b.resumption_source == "log"
++
++
++def test_agent_resumption_wins(client, db):
++    b = _break_with_log(db, [FOCUSED] * 6, [FOCUSED] * 6)
++    r = client.post("/session/s1/resumption", json={"break_id": b.id, "seconds_to_first_edit": 38})
++    assert r.status_code == 200
++    db.refresh(b)
++    assert b.resumption_lag_sec == 38 and b.resumption_source == "agent"
++
++
++# ── migration for databases created before Task 3 ────────
++
++def test_migration_adds_missing_columns_and_is_safe_to_rerun():
++    engine = create_engine("sqlite://")
++    with engine.begin() as conn:      # an old-style breaks table without the new columns
++        conn.execute(text("CREATE TABLE breaks (id VARCHAR(36) PRIMARY KEY, session_id VARCHAR(36))"))
++    assert set(add_break_columns.run(engine)) == {"ended_at", "intervention_id",
++                                                  "resumption_lag_sec", "resumption_source"}
++    assert add_break_columns.run(engine) == []

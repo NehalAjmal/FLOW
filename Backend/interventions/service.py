@@ -12,6 +12,7 @@ from db_models.intervention import Intervention
 from db_models.session import Session
 from db_models.user_settings import UserSettings
 from interventions.gating import GateResult, check_gate
+from breaks_app.service import user_on_break
 
 # Only these states lead to a prompt. deep_work and neutral are status
 # messages, not prompts, so they never use up the 15-minute gap.
@@ -69,7 +70,7 @@ def gate_for_user(db: DBSession, user_id: str, now: datetime) -> GateResult:
     return check_gate(
         now,
         paused_until=_aware(s.paused_until),
-        on_break=False,                      # TODO Task 3: True while a break is running
+        on_break=user_on_break(db, user_id),
         in_meeting=in_meeting(db, user_id, now),
         quiet_hours=quiet,
         tz_name=s.timezone,

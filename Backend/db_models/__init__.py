@@ -9,6 +9,7 @@ from db_models.llm_cache      import LLMCache
 from db_models.refresh_token  import RefreshToken
 from db_models.intervention   import Intervention
 from db_models.user_settings  import UserSettings
+from db_models.rating         import Rating
 
 __all__ = [
     "Base", "engine", "SessionLocal", "get_db",
@@ -22,4 +23,5 @@ __all__ = [
     "RefreshToken",
     "Intervention",
     "UserSettings",
+    "Rating",
 ]

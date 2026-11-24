@@ -17,6 +17,8 @@ import os
 import sys
 from learning.engine import PatternLearner
 from interventions.service import PROMPT_STATES, gate_for_user, record_intervention
+from breaks_app import service as breaks_service
+from db_models.breaks import Break
  
 
 #  FATIGUE SERVICE
@@ -179,9 +181,16 @@ def _rehydrate_live(db: DBSession, session: Session) -> dict:
 
     engines = _new_engines()
     start = _as_aware_utc(session.start_time) or _utcnow()
-    # Resume the ultradian clock from the real start time
+    # Resume the ultradian clock from the last break's end, or the session start
+    last_break = (
+        db.query(Break)
+        .filter(Break.session_id == session.id, Break.ended_at.isnot(None))
+        .order_by(Break.ended_at.desc())
+        .first()
+    )
+    clock_from = _as_aware_utc(last_break.ended_at) if last_break else start
     engines["ultradian"] = UltradianEngine(cycle_minutes=cycle_minutes)
-    engines["ultradian"].start_time = start.timestamp()
+    engines["ultradian"].start_time = clock_from.timestamp()
 
     live = {
         "state": "deep_work",
@@ -342,6 +351,7 @@ def ingest_signal(
 
     log.append({
         "ts": timestamp,
+        "at": _utcnow().isoformat(),   # server time (UTC); breaks use it to find before/after ticks
         "keystrokes": keystroke_count,
         "switches": window_switches,
         "idle": idle_seconds,
@@ -356,9 +366,17 @@ def ingest_signal(
     })
 
     session.signal_log = log[-SIGNAL_LOG_CAP:]
+    breaks_service.update_pending(db, session)   # restoration + resumption lag, once there's data
     db.commit()
 
     return live
+
+
+def reset_ultradian(session_id: str) -> None:
+    """A break just ended: the ultradian clock starts again from now."""
+    live = _live_sessions.get(session_id)
+    if live:
+        live["engines"]["ultradian"].reset_after_break()
 
 
 def clear_live_intervention(session_id: str) -> None:
@@ -470,6 +488,10 @@ def end_session(
 
     session.end_time = _utcnow()
     session.self_rated_quality = self_rated_quality
+
+    running = breaks_service.active_break(db, session_id)
+    if running is not None:            # session ended mid-break: close the break too
+        breaks_service.end_break(db, running, None, session.end_time)
 
     log = session.signal_log or []
     scores = [entry.get("score", 75) for entry in log]
