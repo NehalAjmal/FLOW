@@ -228,11 +228,24 @@ def get_recent_intentions(
 # ── Stuck endpoint (Gemini AI) — was already here ─────────────────────────────
 
 @router.post("/stuck", response_model=StuckResponse)
-async def get_stuck_suggestions(payload: StuckRequest):
+@router.post("/{session_id}/stuck", response_model=StuckResponse)
+async def get_stuck_suggestions(
+    payload: StuckRequest,
+    current_user: User = Depends(get_current_user),
+    db: DBSession = Depends(get_db),
+):
     """
     Called when user clicks 'I'm stuck — help me break this down'.
     Makes a live Gemini API call with full session context.
+    Requires user auth and active 'llm' consent grant.
     """
+    from consent.service import has_consent
+    if not has_consent(db, current_user.id, "llm"):
+        raise HTTPException(
+            status_code=403,
+            detail="llm_consent_required",
+        )
+
     prompt = stuck_prompt(
         task_declared=payload.task_declared,
         difficulty=payload.difficulty,

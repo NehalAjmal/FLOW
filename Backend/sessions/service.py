@@ -137,11 +137,16 @@ def start_session(
     engines["ultradian"] = UltradianEngine(cycle_minutes=cycle_minutes)
     engines["ultradian"].start()
 
-    #  START FATIGUE TRACKING (CAMERA OPENS HERE)
-    try:
-        fatigue_service.start()
-    except Exception as e:
-        print("fatigue start failed:", e)
+    #  START FATIGUE TRACKING (CAMERA OPENS HERE ONLY IF GRANTED)
+    from consent.service import has_consent
+    camera_allowed = has_consent(db, user_id, "camera")
+    if camera_allowed:
+        try:
+            fatigue_service.start()
+        except Exception as e:
+            print("fatigue start failed:", e)
+    else:
+        print(f"[Privacy] Camera consent not granted for user {user_id}. Webcam disabled.")
 
     #  START KEYBOARD/MOUSE LOCAL AGENT
     agent_process = None
