@@ -9,13 +9,10 @@ from user.router     import router as user_router
 from team.router     import router as team_router
 from admin.router    import router as admin_router
 from biometric.router import router as biometric_router
-<<<<<<< HEAD
 from settings_app.router import router as settings_router
 from interventions.router import router as intervention_router
 from breaks_app.router import router as breaks_router
-=======
 from consent.router  import router as consent_router
->>>>>>> origin/main
 
 app = FastAPI(
     title="FLOW API",
@@ -39,14 +36,11 @@ app.include_router(user_router,      prefix="/user",      tags=["User"])
 app.include_router(team_router,      prefix="/team",      tags=["Team"])
 app.include_router(admin_router,     prefix="/admin",     tags=["Admin"])
 app.include_router(biometric_router, prefix="/biometric", tags=["Biometric"])
-<<<<<<< HEAD
 app.include_router(intervention_router, prefix="/intervention", tags=["Intervention"])
 app.include_router(breaks_router,                          tags=["Breaks"])     # /breaks, /ratings, /session/{id}/resumption
 app.include_router(settings_router,                        tags=["Settings"])
-=======
 app.include_router(consent_router,   prefix="/consent",   tags=["Consent"])
 app.include_router(consent_router,   prefix="/api/v1/consent", tags=["Consent"])
->>>>>>> origin/main
 
 # ── Health ────────────────────────────────────────────────────────────────────
 @app.get("/", tags=["Health"])
