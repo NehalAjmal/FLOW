@@ -1,5 +1,5 @@
 from typing import Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from sqlalchemy.orm import Session as DBSession
 
 from db_models.user import User
@@ -148,11 +148,21 @@ def start_session(
     else:
         print(f"[Privacy] Camera consent not granted for user {user_id}. Webcam disabled.")
 
-    #  START KEYBOARD/MOUSE LOCAL AGENT
+    #  START KEYBOARD/MOUSE LOCAL AGENT WITH AUTH TOKEN
     agent_process = None
     try:
-        agent_script = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "agent", "main.py"))
-        agent_process = subprocess.Popen([sys.executable, agent_script, session.id])
+        from auth.utils import create_access_token
+        agent_token = create_access_token(data={"sub": user_id, "role": "agent"}, expires_delta=timedelta(hours=24))
+        agent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "agent"))
+        token_path = os.path.join(agent_dir, ".agent_token")
+        try:
+            with open(token_path, "w") as f:
+                f.write(agent_token)
+        except Exception:
+            pass
+
+        agent_script = os.path.abspath(os.path.join(agent_dir, "main.py"))
+        agent_process = subprocess.Popen([sys.executable, agent_script, session.id, agent_token])
     except Exception as e:
         print("Agent start failed:", e)
 
@@ -168,6 +178,20 @@ def start_session(
         "trough_minute": int(params.get("trough_minute") or DEFAULT_TROUGH_MINUTE),
     }
 
+    return session
+
+
+def verify_session_ownership(db: DBSession, session_id: str, user_id: str) -> Session:
+    """
+    Verify that the session exists and belongs to user_id.
+    Prevents IDOR across all session endpoints.
+    """
+    from fastapi import HTTPException
+    session = db.query(Session).filter(Session.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Forbidden: You do not own this session")
     return session
 
 

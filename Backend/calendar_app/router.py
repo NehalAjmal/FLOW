@@ -6,10 +6,15 @@
 import json
 import asyncio
 from datetime import datetime, timezone, timedelta
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session as DBSession
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
+from db_models.base import get_db
+from db_models.user import User
+from auth.dependencies import get_current_user
+from consent.service import has_consent
 from .service import compute_warning_level, build_recommendation
 from .schemas import CalendarContext, CalendarEvent
 
@@ -17,12 +22,23 @@ router = APIRouter()
 
 
 @router.get("/context", response_model=CalendarContext)
-async def get_calendar_context(google_token: str = None):
+async def get_calendar_context(
+    google_token: str = None,
+    current_user: User = Depends(get_current_user),
+    db: DBSession = Depends(get_db),
+):
     """
     Fetch the user's Google Calendar events for the next 3 hours.
-    Called on session start screen load to warn about upcoming meetings.
-    Returns structured calendar context including warning level and recommendation.
+    Requires user authentication and active 'calendar' consent.
     """
+    if not has_consent(db, current_user.id, "calendar"):
+        return CalendarContext(
+            has_upcoming_events=False,
+            warning_level="none",
+            next_event=None,
+            events=[],
+            recommendation="Grant calendar consent in privacy settings to view upcoming meetings.",
+        )
 
     if not google_token:
         return CalendarContext(

@@ -53,3 +53,4 @@ frontend/ios/Flutter/flutter_export_environment.sh
 
 # ── Runtime artifacts ─────────────────────────────────────
 Backend/ml_models/fatigue.json
+.agent_token

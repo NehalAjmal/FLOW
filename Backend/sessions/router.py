@@ -83,12 +83,14 @@ def start_session(
 def receive_signal(
     payload: SignalRequest,
     db: DBSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Python agent calls this every 30 seconds with behavioral data.
-    No auth required — agent runs locally and we trust it.
-    Updates live state and decides if intervention is needed.
+    Requires authentication and session ownership verification.
     """
+    service.verify_session_ownership(db, payload.session_id, current_user.id)
+
     live = service.ingest_signal(
         db=db,
         session_id=payload.session_id,
@@ -118,8 +120,10 @@ def get_status(
 ):
     """
     Flutter polls this every 8 seconds during an active session.
-    Returns full state for the active session UI.
+    Requires session ownership verification to prevent IDOR.
     """
+    service.verify_session_ownership(db, session_id, current_user.id)
+
     status = service.get_session_status(db=db, session_id=session_id)
     if status is None:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -134,7 +138,10 @@ def respond_to_intervention(
 ):
     """
     User clicks accept/dismiss/stuck on an intervention card.
+    Requires session ownership verification.
     """
+    service.verify_session_ownership(db, payload.session_id, current_user.id)
+
     result = service.handle_intervention_response(
         db=db,
         session_id=payload.session_id,
@@ -151,7 +158,10 @@ def end_session(
 ):
     """
     User ends the session. Returns replay and stats for session-end screen.
+    Requires session ownership verification.
     """
+    service.verify_session_ownership(db, payload.session_id, current_user.id)
+
     result = service.end_session(
         db=db,
         session_id=payload.session_id,
@@ -245,6 +255,9 @@ async def get_stuck_suggestions(
             status_code=403,
             detail="llm_consent_required",
         )
+
+    if payload.session_id:
+        service.verify_session_ownership(db, payload.session_id, current_user.id)
 
     prompt = stuck_prompt(
         task_declared=payload.task_declared,

@@ -1,7 +1,7 @@
 from typing import Optional
 from datetime import datetime, timedelta, timezone
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
@@ -25,6 +25,7 @@ from auth.utils import (
 )
 from auth.totp import generate_totp_secret, verify_totp_code, get_otpauth_url
 from auth.dependencies import require_admin
+from auth.rate_limit import login_rate_limiter
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -119,11 +120,28 @@ def register_user(payload: RegisterRequest, db: Session = Depends(get_db)):
 # ── /login ─────────────────────────────────────────────────────────────────────
 
 @router.post("/login", response_model=LoginResponse, status_code=status.HTTP_200_OK)
-def login_user(payload: LoginRequest, db: Session = Depends(get_db)):
+def login_user(
+    payload: LoginRequest,
+    request: Request = None,
+    db: Session = Depends(get_db),
+):
+    client_ip = request.client.host if (request and request.client) else "127.0.0.1"
+    rate_key = f"{client_ip}:{payload.email.lower()}"
+
+    if login_rate_limiter.is_rate_limited(rate_key):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="rate_limited",
+        )
+
     user = db.query(User).filter(User.email == payload.email).first()
 
     if not user or not verify_password(payload.password, user.password_hash):
+        login_rate_limiter.record_failure(rate_key)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
+
+    # Reset failure counter on successful credentials
+    login_rate_limiter.reset(rate_key)
 
     # Consent check per CONTRACT_NOTES.md §1: consent_missing[]
     from consent.service import has_consent, KNOWN_SCOPES
