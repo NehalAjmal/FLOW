@@ -50,6 +50,7 @@ def check_gate(
     quiet_hours: Optional[Tuple[str, str]] = None,
     tz_name: str = "UTC",
     last_prompt_at: Optional[datetime] = None,
+    snoozed_until: Optional[datetime] = None,
 ) -> GateResult:
     """Run every rule in order. The first one that blocks wins."""
     if paused_until is not None and now_utc < paused_until:
@@ -60,6 +61,10 @@ def check_gate(
         return GateResult(False, "in_meeting")
     if in_quiet_hours(now_utc, quiet_hours, tz_name):
         return GateResult(False, "quiet_hours")
-    if last_prompt_at is not None and now_utc - last_prompt_at < MIN_GAP:
+    if snoozed_until is not None:
+        # The user chose "remind me in N minutes": their N replaces the 15-minute gap.
+        if now_utc < snoozed_until:
+            return GateResult(False, "snoozed")
+    elif last_prompt_at is not None and now_utc - last_prompt_at < MIN_GAP:
         return GateResult(False, "too_soon")
     return GateResult(True)

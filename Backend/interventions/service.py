@@ -2,10 +2,9 @@
 # The database side of gating: collect the real facts for one user,
 # then ask the pure check_gate() function in gating.py.
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import func
 from sqlalchemy.orm import Session as DBSession
 
 from db_models.calendar_cache import CalendarCache
@@ -52,19 +51,21 @@ def in_meeting(db: DBSession, user_id: str, now: datetime) -> bool:
     return hit is not None
 
 
-def last_prompt_at(db: DBSession, user_id: str) -> Optional[datetime]:
-    """When this user last saw a prompt, in any session."""
-    latest = (
-        db.query(func.max(Intervention.shown_at))
+def latest_prompt(db: DBSession, user_id: str) -> Optional[Intervention]:
+    """The last prompt this user saw, in any session (or None)."""
+    return (
+        db.query(Intervention)
         .filter(Intervention.user_id == user_id)
-        .scalar()
+        .order_by(Intervention.shown_at.desc())
+        .first()
     )
-    return _aware(latest)
 
 
 def gate_for_user(db: DBSession, user_id: str, now: datetime) -> GateResult:
     s = get_settings(db, user_id)
     quiet = (s.quiet_start, s.quiet_end) if s.quiet_start and s.quiet_end else None
+    last = latest_prompt(db, user_id)
+    snoozed_until = _aware(last.snooze_until) if last and last.response == "snoozed" else None
     return check_gate(
         now,
         paused_until=_aware(s.paused_until),
@@ -72,7 +73,8 @@ def gate_for_user(db: DBSession, user_id: str, now: datetime) -> GateResult:
         in_meeting=in_meeting(db, user_id, now),
         quiet_hours=quiet,
         tz_name=s.timezone,
-        last_prompt_at=last_prompt_at(db, user_id),
+        last_prompt_at=_aware(last.shown_at) if last else None,
+        snoozed_until=snoozed_until,
     )
 
 
@@ -100,3 +102,69 @@ def record_intervention(
     db.commit()
     db.refresh(row)
     return row
+
+
+# ── Task 2: responses ─────────────────────────────────────
+
+RESPONSES = {"accepted", "dismissed", "snoozed"}
+OVERRIDE_REASONS = {"incident", "deploy", "pairing", "other"}
+REPORT_REASONS = {"wrong_time", "in_meeting", "too_frequent", "not_needed", "other"}
+
+
+class AlreadyAnswered(Exception):
+    """A prompt gets one answer. Reporting it as bad is separate and always allowed."""
+
+
+def get_for_user(db: DBSession, intervention_id: str, user_id: str) -> Optional[Intervention]:
+    """Only return the prompt if it belongs to this user (ownership check)."""
+    return (
+        db.query(Intervention)
+        .filter(Intervention.id == intervention_id, Intervention.user_id == user_id)
+        .first()
+    )
+
+
+def _answer(db: DBSession, row: Intervention, response: str, now: datetime) -> None:
+    if row.response is not None:
+        raise AlreadyAnswered(row.response)
+    row.response = response
+    row.responded_at = now
+    if response == "accepted":
+        session = db.get(Session, row.session_id)
+        if session is not None:
+            session.interventions_accepted = (session.interventions_accepted or 0) + 1
+
+
+def respond(db: DBSession, row: Intervention, response: str,
+            snooze_minutes: Optional[int], now: datetime) -> Intervention:
+    _answer(db, row, response, now)
+    if response == "snoozed":
+        row.snooze_until = now + timedelta(minutes=snooze_minutes or 10)
+    db.commit()
+    return row
+
+
+def override(db: DBSession, row: Intervention, reason: str, now: datetime) -> Intervention:
+    _answer(db, row, "overridden", now)
+    row.override_reason = reason
+    db.commit()
+    return row
+
+
+def report(db: DBSession, row: Intervention, reason: str, free_text: Optional[str]) -> Intervention:
+    row.report_reason = reason
+    row.report_text = (free_text or "").strip()[:1000] or None
+    db.commit()
+    return row
+
+
+def session_counts(db: DBSession, session_id: str) -> dict:
+    """How many prompts a session got and what happened to each one."""
+    rows = db.query(Intervention).filter(Intervention.session_id == session_id).all()
+    counts = {"shown": len(rows), "accepted": 0, "dismissed": 0, "snoozed": 0,
+              "overridden": 0, "unanswered": 0, "reported": 0}
+    for r in rows:
+        counts[r.response or "unanswered"] += 1
+        if r.report_reason:
+            counts["reported"] += 1
+    return counts

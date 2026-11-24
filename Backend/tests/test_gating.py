@@ -59,3 +59,15 @@ def test_no_quiet_hours_set():
 def test_first_blocking_rule_wins():
     r = check_gate(NOW, paused_until=NOW + timedelta(hours=1), in_meeting=True)
     assert r.reason == "paused"
+
+
+def test_snoozed():
+    r = check_gate(NOW, last_prompt_at=NOW - timedelta(minutes=2),
+                   snoozed_until=NOW + timedelta(minutes=3))
+    assert r.reason == "snoozed"
+
+
+def test_short_snooze_replaces_the_15_minute_gap():
+    # shown 6 min ago, snoozed for 5 -> may come back now, even though 15 min haven't passed
+    assert check_gate(NOW, last_prompt_at=NOW - timedelta(minutes=6),
+                      snoozed_until=NOW - timedelta(minutes=1)).allowed

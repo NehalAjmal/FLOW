@@ -10,6 +10,7 @@ from team.router     import router as team_router
 from admin.router    import router as admin_router
 from biometric.router import router as biometric_router
 from settings_app.router import router as settings_router
+from interventions.router import router as intervention_router
 
 app = FastAPI(
     title="FLOW API",
@@ -33,6 +34,7 @@ app.include_router(user_router,      prefix="/user",      tags=["User"])
 app.include_router(team_router,      prefix="/team",      tags=["Team"])
 app.include_router(admin_router,     prefix="/admin",     tags=["Admin"])
 app.include_router(biometric_router, prefix="/biometric", tags=["Biometric"])
+app.include_router(intervention_router, prefix="/intervention", tags=["Intervention"])
 app.include_router(settings_router,                        tags=["Settings"])
 
 # ── Health ────────────────────────────────────────────────────────────────────

@@ -21,9 +21,7 @@ from interventions.service import PROMPT_STATES, gate_for_user, record_intervent
 
 #  FATIGUE SERVICE
 from ml_models.fatigue_model import fatigue_service
-def ingest_signal(
-         "active_window": active_window,
-     )
+
 _live_sessions: dict = {}
 
 # The agent sends a tick every 30s; the log covers ~5h before capping.
@@ -361,6 +359,13 @@ def ingest_signal(
     db.commit()
 
     return live
+
+
+def clear_live_intervention(session_id: str) -> None:
+    """Take the answered prompt off the live screen state."""
+    live = _live_sessions.get(session_id)
+    if live:
+        live["intervention"] = None
 
 
 def handle_intervention_response(db: DBSession, session_id: str, response: str):
