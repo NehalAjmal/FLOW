@@ -3,47 +3,60 @@ from sqlalchemy.orm import Session as DBSession
 
 from db_models.base import get_db
 from db_models.user import User
+from db_models.team import Team
 from db_models.session import Session
-from .schemas import TeamSummaryResponse, EmployeeStatus
-from auth.dependencies import get_current_user, require_admin
+from consent.service import has_consent
+from .schemas import TeamSummaryResponse, TeamMetrics, EmployeeStatus
+from auth.dependencies import require_admin
 
 router = APIRouter()
+
+MIN_TEAM_SIZE_THRESHOLD = 5
+
 
 @router.get("/summary", response_model=TeamSummaryResponse)
 def get_team_summary(
     current_user: User = Depends(require_admin),
-    db: DBSession = Depends(get_db)
+    db: DBSession = Depends(get_db),
 ):
     team_id = current_user.team_id
+    team = db.query(Team).filter(Team.id == team_id).first() if team_id else None
+    team_name = team.name if team else (f"Team {team_id}" if team_id else "No Team")
 
-    # 1. Fetch all users in this team
-    team_members = db.query(User).filter(User.team_id == team_id).all() if team_id else []
+    # 1. Fetch all users in this team who granted 'team_aggregate' consent
+    all_members = db.query(User).filter(User.team_id == team_id).all() if team_id else []
+    eligible_members = [m for m in all_members if has_consent(db, m.id, "team_aggregate")]
+    group_size = len(eligible_members)
 
-    # 2. HACKATHON MAGIC: Demo Data for Solo users testing the UI
-    if len(team_members) <= 1:
-        demo_employees = [
-            EmployeeStatus(id="emp_1", display_name="Employee 1", current_status="In Flow", focus_score=88, burnout_risk="Low"),
-            EmployeeStatus(id="emp_2", display_name="Employee 2", current_status="Offline", focus_score=72, burnout_risk="Medium"),
-            EmployeeStatus(id="emp_3", display_name="Employee 3", current_status="In Flow", focus_score=45, burnout_risk="High")
-        ]
+    # 2. PRIVACY SUPPRESSION: Withheld below 5 members (CONTRACT_NOTES.md §7)
+    if group_size < MIN_TEAM_SIZE_THRESHOLD:
         return TeamSummaryResponse(
-            team_name="Engineering Pod Alpha",
-            average_focus_score=68,
-            active_sessions_count=2,
-            total_employees=3,
-            employees=demo_employees
+            group_size=group_size,
+            suppressed=True,
+            reason="Team metrics withheld: at least 5 consenting members required for privacy protection",
+            metrics=None,
+            team_name=team_name,
+            average_focus_score=0,
+            active_sessions_count=0,
+            total_employees=group_size,
+            employees=[],
         )
 
-    # 3. REAL LOGIC: Process actual team members
+    # 3. REAL AGGREGATES FOR TEAMS WITH 5+ MEMBERS
     employees_data = []
     total_score = 0
     active_count = 0
 
-    for i, member in enumerate(team_members):
-        display_name = f"Employee {i+1}" # Privacy filter
+    for i, member in enumerate(eligible_members):
+        # Strict privacy: anonymous display name, never personal names
+        display_name = f"Member {i+1}"
 
-        # Grab their most recent session
-        last_session = db.query(Session).filter(Session.user_id == member.id).order_by(Session.start_time.desc()).first()
+        last_session = (
+            db.query(Session)
+            .filter(Session.user_id == member.id)
+            .order_by(Session.start_time.desc())
+            .first()
+        )
 
         status = "Offline"
         score = 75
@@ -55,7 +68,6 @@ def get_team_summary(
                 status = "In Flow"
                 active_count += 1
 
-            # Simple ML Burnout logic
             if score < 50:
                 risk = "High"
             elif score < 70:
@@ -63,19 +75,29 @@ def get_team_summary(
 
         total_score += score
         employees_data.append(EmployeeStatus(
-            id=str(member.id),
+            id=f"member-{i+1}",
             display_name=display_name,
             current_status=status,
             focus_score=score,
-            burnout_risk=risk
+            burnout_risk=risk,
         ))
 
-    avg_score = int(total_score / len(team_members)) if team_members else 0
+    avg_score = int(total_score / group_size) if group_size > 0 else 0
+
+    metrics = TeamMetrics(
+        average_focus=avg_score,
+        trend=[],
+        active_sessions_count=active_count,
+        total_employees=group_size,
+    )
 
     return TeamSummaryResponse(
-        team_name=f"Team {team_id}",
+        group_size=group_size,
+        suppressed=False,
+        metrics=metrics,
+        team_name=team_name,
         average_focus_score=avg_score,
         active_sessions_count=active_count,
-        total_employees=len(team_members),
-        employees=employees_data
+        total_employees=group_size,
+        employees=employees_data,
     )

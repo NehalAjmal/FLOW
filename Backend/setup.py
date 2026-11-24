@@ -85,10 +85,16 @@ def create_tables():
     import db_models.breaks          # noqa
     import db_models.calendar_cache  # noqa
     import db_models.llm_cache       # noqa
+<<<<<<< HEAD
     import db_models.refresh_token   # noqa
     import db_models.intervention    # noqa
     import db_models.user_settings   # noqa
     import db_models.rating          # noqa
+=======
+    import db_models.refresh_token
+import db_models.consent
+import db_models.audit_log   # noqa
+>>>>>>> origin/main
 
     engine = create_engine(DATABASE_URL)
     Base.metadata.create_all(bind=engine)

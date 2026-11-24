@@ -24,6 +24,9 @@ class TrendPoint(BaseModel):
 
 
 class AdminDashboardResponse(BaseModel):
+    group_size: int = 0
+    suppressed: bool = False
+    reason: Optional[str] = None
     total_employees: int
     active_right_now: int
     avg_focus_score: int
