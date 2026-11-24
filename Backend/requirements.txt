@@ -4,6 +4,7 @@ uvicorn==0.42.0
 SQLAlchemy==2.0.48
 PyMySQL==1.1.2
 pydantic==2.12.5
+email-validator==2.4.0   # pydantic EmailStr in auth/schemas.py needs it
 pydantic-settings==2.13.1
 python-dotenv==1.2.2
 PyJWT==2.12.1
@@ -24,3 +25,10 @@ pywin32==311; sys_platform == "win32"
 pyobjc-core==12.1; sys_platform == "darwin"
 pyobjc-framework-Cocoa==12.1; sys_platform == "darwin"
 pyobjc-framework-Quartz==12.1; sys_platform == "darwin"
+
+# time zones on Windows (quiet hours, pause until end of day)
+tzdata
+
+# tests only
+pytest
+httpx

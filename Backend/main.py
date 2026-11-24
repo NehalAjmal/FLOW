@@ -14,6 +14,8 @@ from interventions.router import router as intervention_router
 from breaks_app.router import router as breaks_router
 from privacy.router import router as privacy_router
 from consent.router  import router as consent_router
+from history.router import router as history_router
+from schedules.router import router as schedules_router
 
 app = FastAPI(
     title="FLOW API",
@@ -29,20 +31,32 @@ app.add_middleware(
 )
 
 # ── Routers ───────────────────────────────────────────────────────────────────
-app.include_router(auth_router)                                         # /auth/*
-app.include_router(session_router,   prefix="/session",   tags=["Session"])
-app.include_router(calendar_router,  prefix="/calendar",  tags=["Calendar"])
-app.include_router(export_router,    prefix="/export",    tags=["Export"])
-app.include_router(user_router,      prefix="/user",      tags=["User"])
-app.include_router(team_router,      prefix="/team",      tags=["Team"])
-app.include_router(admin_router,     prefix="/admin",     tags=["Admin"])
-app.include_router(biometric_router, prefix="/biometric", tags=["Biometric"])
-app.include_router(intervention_router, prefix="/intervention", tags=["Intervention"])
-app.include_router(breaks_router,                          tags=["Breaks"])     # /breaks, /ratings, /session/{id}/resumption
-app.include_router(privacy_router,                         tags=["Privacy"])    # /me/data-summary, /me/data-export, DELETE /me
-app.include_router(settings_router,                        tags=["Settings"])
-app.include_router(consent_router,   prefix="/consent",   tags=["Consent"])
-app.include_router(consent_router,   prefix="/api/v1/consent", tags=["Consent"])
+# The Flutter app puts /api/v1 in front of every path (frontend/CONTRACT_NOTES.md),
+# while the local agent and older code call the bare paths. So every router is
+# mounted twice: at "/x" and at "/api/v1/x". The second copy is hidden from /docs.
+API_PREFIXES = ["", "/api/v1"]
+
+
+def mount(router, prefix: str = "", **kwargs):
+    for base in API_PREFIXES:
+        app.include_router(router, prefix=base + prefix, include_in_schema=(base == ""), **kwargs)
+
+
+mount(auth_router)                                                   # /auth/*
+mount(session_router,      prefix="/session",      tags=["Session"])
+mount(calendar_router,     prefix="/calendar",     tags=["Calendar"])
+mount(export_router,       prefix="/export",       tags=["Export"])
+mount(user_router,         prefix="/user",         tags=["User"])
+mount(team_router,         prefix="/team",         tags=["Team"])
+mount(admin_router,        prefix="/admin",        tags=["Admin"])
+mount(biometric_router,    prefix="/biometric",    tags=["Biometric"])
+mount(intervention_router, prefix="/intervention", tags=["Intervention"])
+mount(consent_router,      prefix="/consent",      tags=["Consent"])
+mount(breaks_router,       tags=["Breaks"])      # /breaks, /ratings, /session/{id}/resumption
+mount(privacy_router,      tags=["Privacy"])     # /me/data-summary, /me/data-export, DELETE /me
+mount(settings_router,     tags=["Settings"])    # /pause, /settings
+mount(history_router,      tags=["History"])     # /sessions, /session/{id}/replay
+mount(schedules_router,    tags=["Schedules"])   # /user/schedules
 
 # ── Health ────────────────────────────────────────────────────────────────────
 @app.get("/", tags=["Health"])

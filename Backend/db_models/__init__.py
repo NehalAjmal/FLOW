@@ -11,6 +11,7 @@ from db_models.intervention   import Intervention
 from db_models.user_settings  import UserSettings
 from db_models.rating         import Rating
 from db_models.data_export    import DataExport
+from db_models.schedule       import Schedule
 from db_models.consent        import ConsentGrant
 from db_models.audit_log      import AuditLog
 
@@ -28,6 +29,7 @@ __all__ = [
     "UserSettings",
     "Rating",
     "DataExport",
+    "Schedule",
     "ConsentGrant",
     "AuditLog",
 ]

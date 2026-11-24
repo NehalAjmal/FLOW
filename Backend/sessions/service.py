@@ -570,6 +570,12 @@ def end_session(
 
     if user:
         user.pattern_model = patterns
+    params = patterns.get("parameters", {}) or {}
+    session.learned_updates = {          # shown as "What FLOW learned" on the replay screen
+        "ultradian_cycle_minutes": params.get("ultradian_cycle_minutes"),
+        "trough_minute": params.get("trough_minute"),
+        "sessions_in_model": len(params.get("_session_lengths") or []),
+    }
     db.commit()
 
     print(f" learned patterns for session {session_id[:8]}: "

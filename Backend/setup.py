@@ -90,6 +90,7 @@ def create_tables():
     import db_models.user_settings   # noqa
     import db_models.rating          # noqa
     import db_models.data_export     # noqa
+    import db_models.schedule        # noqa
     import db_models.refresh_token   # noqa
     import db_models.consent         # noqa
     import db_models.audit_log       # noqa

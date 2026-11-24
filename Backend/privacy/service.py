@@ -15,6 +15,7 @@ from db_models.data_export import DataExport
 from db_models.intervention import Intervention
 from db_models.rating import Rating
 from db_models.refresh_token import RefreshToken
+from db_models.schedule import Schedule
 from db_models.session import Session
 from db_models.user import User
 from db_models.user_settings import UserSettings
@@ -60,6 +61,8 @@ def _categories(db: DBSession, user_id: str) -> list:
          db.query(BiometricReading).filter(BiometricReading.user_id == user_id)),
         ("calendar", "Cached calendar events",
          db.query(CalendarCache).filter(CalendarCache.user_id == user_id)),
+        ("schedules", "Your repeating planned sessions",
+         db.query(Schedule).filter(Schedule.user_id == user_id)),
     ]
 
 
@@ -103,6 +106,7 @@ def delete_account(db: DBSession, user: User) -> None:
     db.query(Rating).filter(Rating.user_id == uid).delete(synchronize_session=False)
     db.query(Intervention).filter(Intervention.user_id == uid).delete(synchronize_session=False)
     db.query(UserSettings).filter(UserSettings.user_id == uid).delete(synchronize_session=False)
+    db.query(Schedule).filter(Schedule.user_id == uid).delete(synchronize_session=False)
     if sids:
         db.query(Break).filter(Break.session_id.in_(sids)).delete(synchronize_session=False)
         db.query(BiometricReading).filter(BiometricReading.session_id.in_(sids)).delete(synchronize_session=False)
