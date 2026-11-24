@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-2.5-flash"
     google_client_id: str
     access_token_expire_minutes: int = 30
+    # Where the Flutter app is served; invite links point here (APP_URL in .env).
+    app_url: str = "http://localhost:8080"
 
     model_config = SettingsConfigDict(env_file=find_dotenv())
 settings = Settings()

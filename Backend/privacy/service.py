@@ -16,6 +16,7 @@ from db_models.intervention import Intervention
 from db_models.rating import Rating
 from db_models.refresh_token import RefreshToken
 from db_models.schedule import Schedule
+from db_models.invite import Invite
 from db_models.session import Session
 from db_models.user import User
 from db_models.user_settings import UserSettings
@@ -115,6 +116,9 @@ def delete_account(db: DBSession, user: User) -> None:
     db.query(CalendarCache).filter(CalendarCache.user_id == uid).delete(synchronize_session=False)
     db.query(ConsentGrant).filter(ConsentGrant.user_id == uid).delete(synchronize_session=False)
     db.query(RefreshToken).filter(RefreshToken.user_id == uid).delete(synchronize_session=False)
+    # Invites they made or used stay with the team, without their name on them.
+    db.query(Invite).filter(Invite.created_by == uid).update({Invite.created_by: None}, synchronize_session=False)
+    db.query(Invite).filter(Invite.used_by == uid).update({Invite.used_by: None}, synchronize_session=False)
     # Admin audit entries stay (they're the team's record), but no longer point at this person.
     db.query(AuditLog).filter(AuditLog.actor_id == uid).update(
         {AuditLog.actor_id: None, AuditLog.actor_email: None}, synchronize_session=False)

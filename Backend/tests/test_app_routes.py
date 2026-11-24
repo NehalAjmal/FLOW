@@ -16,6 +16,10 @@ CONTRACT_PATHS = [
     ("GET", "/consent"),
     ("GET", "/user/dashboard"), ("GET", "/user/patterns"), ("GET", "/user/day"), ("GET", "/user/month"),
     ("GET", "/forecast"),
+    ("GET", "/team/summary"), ("GET", "/admin/members"), ("GET", "/admin/members/{member_id}"),
+    ("GET", "/admin/privacy-status"), ("POST", "/admin/invites"), ("GET", "/admin/invites"),
+    ("DELETE", "/admin/invites/{invite_id}"), ("GET", "/admin/summary"), ("GET", "/admin/trend"),
+    ("GET", "/admin/insights"), ("GET", "/admin/strain"), ("GET", "/admin/meeting-window"),
 ]
 
 

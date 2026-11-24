@@ -28,10 +28,11 @@ def _minutes_between(a: datetime, b: datetime) -> float:
     return (_aware(b) - _aware(a)).total_seconds() / 60
 
 
-def session_summary(db: DBSession, s: Session) -> dict:
-    """One row of history. focus_minutes = time in the session minus time on breaks."""
+def session_summary(db: DBSession, s: Session, until: Optional[datetime] = None) -> dict:
+    """One row of history. focus_minutes = time in the session minus time on breaks.
+    An unfinished session counts up to `until` (default: now)."""
     breaks = db.query(Break).filter(Break.session_id == s.id).all()
-    end = s.end_time or datetime.now(timezone.utc)
+    end = s.end_time or until or datetime.now(timezone.utc)
     total = _minutes_between(s.start_time, end) if s.start_time else 0
     on_break = sum(
         _minutes_between(b.taken_at, b.ended_at or end) for b in breaks if b.taken_at

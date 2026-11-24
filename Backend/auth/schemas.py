@@ -1,9 +1,10 @@
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import AliasChoices, BaseModel, EmailStr, Field, field_validator
 from typing import Optional, List
 
 
 class RegisterRequest(BaseModel):
-    full_name:    str
+    # The Flutter app sends "name"; older clients send "full_name". Accept both.
+    full_name:    str = Field(validation_alias=AliasChoices("full_name", "name"))
     email:        EmailStr
     password:     str
     age:          Optional[int] = None
@@ -11,6 +12,7 @@ class RegisterRequest(BaseModel):
     account_type: str           = "solo"
     company_code: Optional[str] = None
     admin_key:    Optional[str] = None
+    invite_token: Optional[str] = None   # from an admin's invite link (/register?invite=...)
 
     @field_validator("account_type")
     @classmethod

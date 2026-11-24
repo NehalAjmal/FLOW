@@ -229,12 +229,37 @@ def _pressure_by_bucket(sessions: List[Session], day_start: datetime) -> Dict[in
     return {i: round(mean(v), 3) for i, v in buckets.items()}
 
 
+def marks(db: DBSession, sessions: List[Session], now: datetime):
+    """Break marks (taken | suggested | snoozed) and nudge outcomes for these sessions.
+    Used by the day view and by the admin's per-person page."""
+    sids = [s.id for s in sessions]
+    prompts = (db.query(Intervention).filter(Intervention.session_id.in_(sids)).all() if sids else [])
+    breaks = (db.query(Break).filter(Break.session_id.in_(sids)).all() if sids else [])
+    taken_from = {b.intervention_id for b in breaks if b.intervention_id}
+
+    break_marks = [{"at": _iso(b.taken_at), "mark": "taken"} for b in breaks if b.taken_at]
+    for p in prompts:
+        if p.kind in BREAK_PROMPT_KINDS and p.id not in taken_from:
+            break_marks.append({"at": _iso(p.shown_at),
+                                "mark": "snoozed" if p.response == "snoozed" else "suggested"})
+
+    outcome = {"accepted": "taken", "snoozed": "snoozed", "dismissed": "dismissed", "overridden": "dismissed"}
+    nudges = []
+    for p in prompts:
+        if p.response:
+            o = outcome[p.response]
+        else:
+            fresh = now - _aware(p.shown_at) < timedelta(minutes=5)
+            o = "pending" if fresh else "ignored"
+        nudges.append({"at": _iso(p.shown_at), "outcome": o})
+    return sorted(break_marks, key=lambda x: x["at"]), sorted(nudges, key=lambda x: x["at"])
+
+
 def day(db: DBSession, user: User, d: date, now: Optional[datetime] = None) -> dict:
     now = now or datetime.now(timezone.utc)
     tz = user_tz(db, user.id)
     day_start, day_end = day_bounds(d, tz)
     sessions = sessions_between(db, user.id, day_start, day_end)
-    sids = [s.id for s in sessions]
     summaries = [session_summary(db, s) for s in sessions]
 
     timeline = []
@@ -257,25 +282,7 @@ def day(db: DBSession, user: User, d: date, now: Optional[datetime] = None) -> d
                          "state": "scheduled", "task_text": sch.name})
     timeline.sort(key=lambda x: x["start"])
 
-    prompts = (db.query(Intervention).filter(Intervention.session_id.in_(sids)).all() if sids else [])
-    breaks = (db.query(Break).filter(Break.session_id.in_(sids)).all() if sids else [])
-    taken_from = {b.intervention_id for b in breaks if b.intervention_id}
-
-    break_marks = [{"at": _iso(b.taken_at), "mark": "taken"} for b in breaks if b.taken_at]
-    for p in prompts:
-        if p.kind in BREAK_PROMPT_KINDS and p.id not in taken_from:
-            break_marks.append({"at": _iso(p.shown_at),
-                                "mark": "snoozed" if p.response == "snoozed" else "suggested"})
-
-    outcome = {"accepted": "taken", "snoozed": "snoozed", "dismissed": "dismissed", "overridden": "dismissed"}
-    nudges = []
-    for p in prompts:
-        if p.response:
-            o = outcome[p.response]
-        else:
-            fresh = now - _aware(p.shown_at) < timedelta(minutes=5)
-            o = "pending" if fresh else "ignored"
-        nudges.append({"at": _iso(p.shown_at), "outcome": o})
+    break_marks, nudges = marks(db, sessions, now)
 
     meetings = [
         {"start": _iso(m.starts_at), "end": _iso(m.ends_at), "title": m.title}
@@ -318,8 +325,8 @@ def day(db: DBSession, user: User, d: date, now: Optional[datetime] = None) -> d
     return {
         "date": d.isoformat(),
         "sessions": timeline,
-        "breaks": sorted(break_marks, key=lambda x: x["at"]),
-        "nudges": sorted(nudges, key=lambda x: x["at"]),
+        "breaks": break_marks,
+        "nudges": nudges,
         "meetings": meetings,
         "pressure": pressure,
         # No model predicts pressure ahead yet, so no forecast line rather than a made-up one.
