@@ -23,6 +23,8 @@ class User(Base):
     pattern_model:   Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
     burnout_flagged: Mapped[bool]     = mapped_column(Boolean,  nullable=False, default=False)
+    mfa_secret:      Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    mfa_enabled:     Mapped[bool]          = mapped_column(Boolean, nullable=False, default=False)
     created_at:      Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     # Relationships
