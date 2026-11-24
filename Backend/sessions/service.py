@@ -463,11 +463,11 @@ def get_session_status(db: DBSession, session_id: str):
         # report DB-derived basics instead of inventing a fake healthy session.
         log = session.signal_log or []
         return {
-            "state": log[-1]["state"] if log else "deep_work",
-            "focus_score": round(log[-1]["score"], 1) if log else 0.0,
+            "state": log[-1].get("state") if log else None,
+            "focus_score": round(log[-1]["score"], 1) if log and log[-1].get("score") is not None else None,
             "signals": {
-                "behavioral": 0.0,
-                "ultradian": 0.5,
+                "behavioral": None,
+                "ultradian": None,
                 "biometric": fatigue.get("fatigue_score", 0.0),
                 "ear": min(1.0, fatigue.get("ear", 0.0) * 3),
             },
@@ -479,10 +479,10 @@ def get_session_status(db: DBSession, session_id: str):
 
     return {
         "state": live.get("state", "deep_work"),
-        "focus_score": round(live.get("focus_score", 75), 1),
+        "focus_score": round(live["focus_score"], 1) if live.get("focus_score") is not None else None,
         "signals": {
             "behavioral": min(1.0, live.get("keystrokes_per_min", 0) / 40),
-            "ultradian": engines["ultradian"].compute() if engines else 0.5,
+            "ultradian": engines["ultradian"].compute() if engines else None,
             "biometric": fatigue.get("fatigue_score", 0.0),
             "ear": min(1.0, fatigue.get("ear", 0.0) * 3),
         },

@@ -63,7 +63,8 @@ def focus_dna_insight_prompt(user_name: str, peak_hours: list,
     Build the prompt for generating a personalized weekly insight
     for the Focus DNA card.
     """
-    peak_hours_str = ", ".join([f"{h}:00" for h in peak_hours])
+    peak_hours_str = ", ".join([f"{h}:00" for h in peak_hours]) or "not enough data yet"
+    cycle_str = f"{cycle_length_minutes} minutes" if cycle_length_minutes else "not learned yet"
 
     return f"""
 You are FLOW, an AI cognitive performance assistant.
@@ -71,11 +72,11 @@ A user just completed their week. Here is their actual data:
 
 - Name: {user_name}
 - Peak focus hours this week: {peak_hours_str}
-- Personal ultradian cycle (their natural focus rhythm): {cycle_length_minutes} minutes
+- Personal ultradian cycle (their natural focus rhythm): {cycle_str}
 - Weekly focus score: {weekly_focus_score:.1f} / 100
 - Best focus day: {best_focus_day}
 - Total sessions completed: {total_sessions}
-- Average session quality rating: {avg_quality:.1f} / 5.0
+- Average session focus score: {avg_quality:.1f} / 100
 
 Write ONE insight sentence (max 20 words) that is:
 1. Specific to THEIR data — reference actual numbers or patterns

@@ -8,7 +8,6 @@ Run once after cloning:
 
 import sys
 import re
-import bcrypt
 import os
 import urllib.request
 from pathlib import Path
@@ -91,6 +90,7 @@ def create_tables():
     import db_models.rating          # noqa
     import db_models.data_export     # noqa
     import db_models.schedule        # noqa
+    import db_models.invite          # noqa
     import db_models.refresh_token   # noqa
     import db_models.consent         # noqa
     import db_models.audit_log       # noqa
@@ -99,35 +99,6 @@ def create_tables():
     Base.metadata.create_all(bind=engine)
     engine.dispose()
     print("   All tables created (or already exist)")
-
-
-def seed_demo_team():
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
-    from db_models.team import Team
-
-    engine = create_engine(DATABASE_URL)
-    SessionLocal = sessionmaker(bind=engine)
-    db = SessionLocal()
-
-    try:
-        existing = db.query(Team).filter(Team.company_code == "ERR011").first()
-        if existing:
-            print("   Demo team ERR011 already exists — skipping seed")
-            return
-
-        admin_key_hash = bcrypt.hashpw(b"000000", bcrypt.gensalt()).decode("utf-8")
-        demo_team = Team(
-            name="Error 011 Demo Corp",
-            company_code="ERR011",
-            admin_key=admin_key_hash,
-        )
-        db.add(demo_team)
-        db.commit()
-        print("   Demo team ERR011 seeded (admin key: 000000)")
-    finally:
-        db.close()
-        engine.dispose()
 
 
 def main():
@@ -153,12 +124,8 @@ def main():
         print(f"   Failed: {e}")
         sys.exit(1)
 
-    print("[4/4] Seeding demo data...")
-    try:
-        seed_demo_team()
-    except Exception as e:
-        print(f"   Failed: {e}")
-        sys.exit(1)
+    # No demo team any more: its admin key was public, so anyone could become its admin.
+    print("[4/4] Make your team with:  python create_team.py \"Your team name\"")
 
     print("\n Setup complete! Run the server with:\n")
     print("   uvicorn main:app --reload\n")

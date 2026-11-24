@@ -12,6 +12,7 @@ from db_models.user import User
 from auth.dependencies import get_current_user
 from .schemas import FocusDNARequest, FocusDNAResponse
 from .service import generate_focus_dna
+from insights.service import learned_cycle
 
 router = APIRouter()
 
@@ -61,12 +62,11 @@ async def export_focus_dna(
         weekly_focus_score = 0.0
         avg_quality = 0.0
         best_day = "—"
-        peak_hours = [9]
+        peak_hours = []          # no sessions this week, so no peak hours (was a made-up [9])
 
-    # Learned cycle length when available, else the 90-min default
-    pattern = current_user.pattern_model or {}
-    params = pattern.get("parameters", {}) or {}
-    cycle_minutes = int(params.get("ultradian_cycle_minutes") or params.get("ultradian_period") or 90)
+    # Learned cycle length, or None until the learner really has it (it says 90 before that)
+    cycle = learned_cycle(current_user)
+    cycle_minutes = int(cycle["value"]) if cycle else None
 
     payload = FocusDNARequest(
         user_name=current_user.full_name,

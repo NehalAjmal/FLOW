@@ -38,7 +38,8 @@ def admin_dashboard(
         # Admin has no team (solo account) — dashboard handles it with real zeros
         return get_admin_dashboard(db=db, team_id=None)
 
-    return get_admin_dashboard(db=db, team_id=current_user.team_id)
+    from insights.service import user_tz
+    return get_admin_dashboard(db=db, team_id=current_user.team_id, tz=user_tz(db, current_user.id))
 
 
 @router.post("/send-break-alert")
