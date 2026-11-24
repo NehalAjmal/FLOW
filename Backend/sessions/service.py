@@ -16,10 +16,14 @@ import subprocess
 import os
 import sys
 from learning.engine import PatternLearner
+from interventions.service import PROMPT_STATES, gate_for_user, record_intervention
+ 
 
 #  FATIGUE SERVICE
 from ml_models.fatigue_model import fatigue_service
-
+def ingest_signal(
+         "active_window": active_window,
+     )
 _live_sessions: dict = {}
 
 # The agent sends a tick every 30s; the log covers ~5h before capping.
@@ -308,16 +312,29 @@ def ingest_signal(
         "active_window": active_window,
     })
 
-    #  PREDICTIVE INTERVENTION
-    if trough_pressure > 0.8 and not live["intervention"]:
-        live["intervention"] = {
+     #  INTERVENTION: pick a candidate, then let gating decide
+    candidate_kind, candidate = None, None
+    if trough_pressure > 0.8:
+        candidate_kind = "trough"
+        candidate = {
             "title": "Upcoming focus dip",
             "message": "You're nearing a natural dip in focus. Consider taking a break.",
             "action_label": "Take Break"
         }
 
-    elif live["minutes_in_state"] > 5 and not live["intervention"]:
-        live["intervention"] = get_intervention(new_state)
+    elif live["minutes_in_state"] > 5 and new_state in PROMPT_STATES:
+        candidate_kind = new_state
+        candidate = get_intervention(new_state)
+
+    live["gate_reason"] = None
+    if candidate and not live["intervention"]:
+        now = _utcnow()
+        gate = gate_for_user(db, live["user_id"], now)
+        if gate.allowed:
+            row = record_intervention(db, session, candidate_kind, candidate, new_score, now)
+            live["intervention"] = {**candidate, "id": row.id, "kind": candidate_kind}
+        else:
+            live["gate_reason"] = gate.reason   # e.g. "quiet_hours"; handy when debugging
 
     # ── DB LOG ───────────────────────────────
     # FIX: list() creates a NEW object so SQLAlchemy detects the change.
