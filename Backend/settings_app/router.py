@@ -1,10 +1,9 @@
 # settings_app/router.py
-# /pause and /settings. Only the parts gating needs for now;
-# Task 4 adds delivery mode, camera, calendar and LLM switches here.
+# /pause and /settings, shapes from frontend/CONTRACT_NOTES.md section 2.
 
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import List, Literal, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -14,7 +13,9 @@ from sqlalchemy.orm import Session as DBSession
 from auth.dependencies import get_current_user
 from db_models.base import get_db
 from db_models.user import User
+from consent.service import has_consent
 from interventions.service import get_settings, _aware
+from settings_app.service import NEEDS_CONSENT, settings_out
 
 router = APIRouter()
 
@@ -42,19 +43,21 @@ class QuietHours(BaseModel):
 
 class SettingsUpdate(BaseModel):
     # Every field is optional: PUT only changes what you send.
-    quiet_hours: Optional[QuietHours] = None
-    clear_quiet_hours: bool = False
+    delivery_mode: Optional[Literal["advisory", "explained", "lock"]] = None
+    break_length_sec: Optional[int] = Field(default=None, ge=60, le=3600)
+    quiet_hours: Optional[QuietHours] = None          # send null to turn quiet hours off
     timezone: Optional[str] = None
+    camera_enabled: Optional[bool] = None
+    calendar_enabled: Optional[bool] = None
+    llm_enabled: Optional[bool] = None
+    snooze_options: Optional[List[int]] = Field(default=None, min_length=1, max_length=5)
 
-
-def _settings_out(s) -> dict:
-    return {
-        "timezone": s.timezone,
-        "quiet_hours": (
-            {"start": s.quiet_start, "end": s.quiet_end}
-            if s.quiet_start and s.quiet_end else None
-        ),
-    }
+    @field_validator("snooze_options")
+    @classmethod
+    def sensible_minutes(cls, v):
+        if v is not None and any(m < 1 or m > 120 for m in v):
+            raise ValueError("snooze options must be 1-120 minutes")
+        return sorted(set(v)) if v is not None else v
 
 
 # ── Pause ─────────────────────────────────────────────
@@ -106,14 +109,14 @@ def resume(
     return Response(status_code=204)
 
 
-# ── Settings (quiet hours + time zone for now) ─────────
+# ── Settings ───────────────────────────────────────────
 
 @router.get("/settings")
 def read_settings(
     db: DBSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return _settings_out(get_settings(db, current_user.id))
+    return settings_out(db, current_user.id)
 
 
 @router.put("/settings")
@@ -123,6 +126,12 @@ def update_settings(
     current_user: User = Depends(get_current_user),
 ):
     s = get_settings(db, current_user.id)
+    sent = payload.model_fields_set        # the fields the client actually sent
+
+    # The server enforces consent: a switch can't be turned on without it.
+    for field, scope in NEEDS_CONSENT.items():
+        if getattr(payload, field) is True and not has_consent(db, current_user.id, scope):
+            raise HTTPException(status_code=403, detail=f"{scope}_consent_required")
 
     if payload.timezone is not None:
         try:
@@ -131,11 +140,18 @@ def update_settings(
             raise HTTPException(status_code=422, detail=f"Unknown time zone: {payload.timezone}")
         s.timezone = payload.timezone
 
-    if payload.clear_quiet_hours:
-        s.quiet_start = s.quiet_end = None
-    elif payload.quiet_hours is not None:
-        s.quiet_start = payload.quiet_hours.start
-        s.quiet_end = payload.quiet_hours.end
+    if "quiet_hours" in sent:
+        if payload.quiet_hours is None:
+            s.quiet_start = s.quiet_end = None
+        else:
+            s.quiet_start = payload.quiet_hours.start
+            s.quiet_end = payload.quiet_hours.end
+
+    for field in ("delivery_mode", "break_length_sec", "camera_enabled",
+                  "calendar_enabled", "llm_enabled", "snooze_options"):
+        value = getattr(payload, field)
+        if value is not None:
+            setattr(s, field, value)
 
     db.commit()
-    return _settings_out(s)
+    return settings_out(db, current_user.id)

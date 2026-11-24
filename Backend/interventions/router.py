@@ -85,7 +85,11 @@ def read(
     db: DBSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return _out(_load(db, intervention_id, current_user))
+    out = _out(_load(db, intervention_id, current_user))
+    s = service.get_settings(db, current_user.id)
+    out["delivery_mode"] = s.delivery_mode or "advisory"     # how the app should show it
+    out["suggested_break_sec"] = s.break_length_sec or 300   # the user's chosen break length
+    return out
 
 
 @router.post("/{intervention_id}/respond")

@@ -142,8 +142,8 @@ def start_session(
     engines["ultradian"].start()
 
     #  START FATIGUE TRACKING (CAMERA OPENS HERE ONLY IF GRANTED)
-    from consent.service import has_consent
-    camera_allowed = has_consent(db, user_id, "camera")
+    from settings_app.service import feature_allowed
+    camera_allowed = feature_allowed(db, user_id, "camera")   # consent AND the Settings switch
     if camera_allowed:
         try:
             fatigue_service.start()
@@ -399,6 +399,20 @@ def ingest_signal(
     db.commit()
 
     return live
+
+
+def drop_live_session(session_id: str) -> None:
+    """Account deleted mid-session: stop the agent and camera, forget the live state."""
+    live = _live_sessions.pop(session_id, None)
+    if live and live.get("agent_process"):
+        try:
+            live["agent_process"].terminate()
+        except Exception:
+            pass
+    try:
+        fatigue_service.stop()
+    except Exception:
+        pass
 
 
 def reset_ultradian(session_id: str) -> None:

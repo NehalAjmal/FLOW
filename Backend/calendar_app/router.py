@@ -14,7 +14,7 @@ from googleapiclient.discovery import build
 from db_models.base import get_db
 from db_models.user import User
 from auth.dependencies import get_current_user
-from consent.service import has_consent
+from settings_app.service import feature_allowed
 from .service import compute_warning_level, build_recommendation
 from .schemas import CalendarContext, CalendarEvent
 
@@ -31,7 +31,7 @@ async def get_calendar_context(
     Fetch the user's Google Calendar events for the next 3 hours.
     Requires user authentication and active 'calendar' consent.
     """
-    if not has_consent(db, current_user.id, "calendar"):
+    if not feature_allowed(db, current_user.id, "calendar"):
         return CalendarContext(
             has_upcoming_events=False,
             warning_level="none",

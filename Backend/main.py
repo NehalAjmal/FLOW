@@ -12,6 +12,7 @@ from biometric.router import router as biometric_router
 from settings_app.router import router as settings_router
 from interventions.router import router as intervention_router
 from breaks_app.router import router as breaks_router
+from privacy.router import router as privacy_router
 from consent.router  import router as consent_router
 
 app = FastAPI(
@@ -38,6 +39,7 @@ app.include_router(admin_router,     prefix="/admin",     tags=["Admin"])
 app.include_router(biometric_router, prefix="/biometric", tags=["Biometric"])
 app.include_router(intervention_router, prefix="/intervention", tags=["Intervention"])
 app.include_router(breaks_router,                          tags=["Breaks"])     # /breaks, /ratings, /session/{id}/resumption
+app.include_router(privacy_router,                         tags=["Privacy"])    # /me/data-summary, /me/data-export, DELETE /me
 app.include_router(settings_router,                        tags=["Settings"])
 app.include_router(consent_router,   prefix="/consent",   tags=["Consent"])
 app.include_router(consent_router,   prefix="/api/v1/consent", tags=["Consent"])

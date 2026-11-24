@@ -99,10 +99,11 @@ def test_settings_quiet_hours_and_timezone(client, db):
     r = client.put("/settings", json={"timezone": "Asia/Kolkata",
                                       "quiet_hours": {"start": "15:00", "end": "16:00"}})
     assert r.status_code == 200
-    assert r.json() == {"timezone": "Asia/Kolkata", "quiet_hours": {"start": "15:00", "end": "16:00"}}
+    assert r.json()["timezone"] == "Asia/Kolkata"
+    assert r.json()["quiet_hours"] == {"start": "15:00", "end": "16:00"}
     assert service.gate_for_user(db, "u1", NOW).reason == "quiet_hours"
 
-    client.put("/settings", json={"clear_quiet_hours": True})
+    client.put("/settings", json={"quiet_hours": None})
     assert client.get("/settings").json()["quiet_hours"] is None
 
 

@@ -249,8 +249,8 @@ async def get_stuck_suggestions(
     Makes a live Gemini API call with full session context.
     Requires user auth and active 'llm' consent grant.
     """
-    from consent.service import has_consent
-    if not has_consent(db, current_user.id, "llm"):
+    from settings_app.service import feature_allowed
+    if not feature_allowed(db, current_user.id, "llm"):    # consent AND the Settings switch
         raise HTTPException(
             status_code=403,
             detail="llm_consent_required",
