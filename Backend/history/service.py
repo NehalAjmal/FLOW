@@ -132,14 +132,16 @@ def replay(db: DBSession, s: Session) -> dict:
 
 def learned_lines(learned: Optional[dict]) -> List[str]:
     """Plain sentences from what the learner stored at session end. Nothing is invented:
-    a line only appears if the learner actually produced that number."""
+    the learner returns 90 min / minute 45 as placeholders until it has data,
+    so a line only appears once the number is really learned."""
     if not learned:
         return []
-    n = learned.get("sessions_in_model") or 0
-    basis = f" (from {n} session{'s' if n != 1 else ''})" if n else ""
     lines = []
-    if learned.get("ultradian_cycle_minutes"):
-        lines.append(f"Your focus cycle estimate is now {learned['ultradian_cycle_minutes']} min{basis}.")
-    if learned.get("trough_minute"):
-        lines.append(f"Your focus usually dips around minute {learned['trough_minute']}{basis}.")
+    n = learned.get("sessions_in_model") or 0
+    if learned.get("ultradian_cycle_minutes") and n >= 3:        # learner needs 3 sessions for the cycle
+        lines.append(f"Your focus cycle estimate is now {learned['ultradian_cycle_minutes']} min (from {n} sessions).")
+    t = learned.get("trough_samples") or 0
+    if learned.get("trough_minute") and t >= 1:
+        lines.append(f"Your focus usually dips around minute {learned['trough_minute']} "
+                     f"(from {t} session{'s' if t != 1 else ''}).")
     return lines

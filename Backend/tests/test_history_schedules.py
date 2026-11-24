@@ -94,7 +94,7 @@ def test_replay_timeline(client, db):
     log = [{"at": (T0 + timedelta(minutes=m)).isoformat(), "state": st}
            for m, st in [(1, "deep_work"), (2, "deep_work"), (20, "distracted"), (30, "deep_work")]]
     s = add_session(db, "s1", log=log, learned={"ultradian_cycle_minutes": 82, "trough_minute": 40,
-                                                "sessions_in_model": 6})
+                                                "sessions_in_model": 6, "trough_samples": 6})
     p = intervention_service.record_intervention(db, s, "distracted", {"title": "Attention scattering"}, 40.0,
                                                  T0 + timedelta(minutes=26))
     p.response = "dismissed"
@@ -122,6 +122,9 @@ def test_replay_of_someone_elses_session_is_404(client, db):
 def test_learned_lines_never_invent():
     assert learned_lines(None) == []
     assert learned_lines({"ultradian_cycle_minutes": None, "trough_minute": None}) == []
+    # the learner's placeholders (90 min, minute 45) before it has enough data
+    assert learned_lines({"ultradian_cycle_minutes": 90, "trough_minute": 45,
+                          "sessions_in_model": 1, "trough_samples": 0}) == []
 
 
 # ── schedules ────────────────────────────────────────────

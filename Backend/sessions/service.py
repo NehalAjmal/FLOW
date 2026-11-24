@@ -575,6 +575,7 @@ def end_session(
         "ultradian_cycle_minutes": params.get("ultradian_cycle_minutes"),
         "trough_minute": params.get("trough_minute"),
         "sessions_in_model": len(params.get("_session_lengths") or []),
+        "trough_samples": len(params.get("_trough_history") or []),
     }
     db.commit()
 

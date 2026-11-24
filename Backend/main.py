@@ -16,6 +16,7 @@ from privacy.router import router as privacy_router
 from consent.router  import router as consent_router
 from history.router import router as history_router
 from schedules.router import router as schedules_router
+from insights.router import router as insights_router
 
 app = FastAPI(
     title="FLOW API",
@@ -57,6 +58,7 @@ mount(privacy_router,      tags=["Privacy"])     # /me/data-summary, /me/data-ex
 mount(settings_router,     tags=["Settings"])    # /pause, /settings
 mount(history_router,      tags=["History"])     # /sessions, /session/{id}/replay
 mount(schedules_router,    tags=["Schedules"])   # /user/schedules
+mount(insights_router,     tags=["Insights"])    # /user/dashboard, /user/patterns, /user/day, /user/month, /forecast
 
 # ── Health ────────────────────────────────────────────────────────────────────
 @app.get("/", tags=["Health"])

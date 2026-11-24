@@ -14,6 +14,8 @@ CONTRACT_PATHS = [
     ("GET", "/sessions"), ("GET", "/session/{session_id}/replay"),
     ("GET", "/user/schedules"), ("POST", "/user/schedules"),
     ("GET", "/consent"),
+    ("GET", "/user/dashboard"), ("GET", "/user/patterns"), ("GET", "/user/day"), ("GET", "/user/month"),
+    ("GET", "/forecast"),
 ]
 
 
