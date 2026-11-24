@@ -23,6 +23,8 @@ class User(Base):
     pattern_model:   Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
     burnout_flagged: Mapped[bool]     = mapped_column(Boolean,  nullable=False, default=False)
+    mfa_secret:      Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    mfa_enabled:     Mapped[bool]          = mapped_column(Boolean, nullable=False, default=False)
     created_at:      Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     # Relationships
@@ -31,6 +33,7 @@ class User(Base):
     biometric_readings: Mapped[list["BiometricReading"]] = relationship("BiometricReading", back_populates="user", cascade="all, delete-orphan")
     calendar_cache:     Mapped[list["CalendarCache"]]    = relationship("CalendarCache",    back_populates="user", cascade="all, delete-orphan")
     refresh_tokens:     Mapped[list["RefreshToken"]]     = relationship("RefreshToken",     back_populates="user", cascade="all, delete-orphan")
+    consent_grants:     Mapped[list["ConsentGrant"]]     = relationship("ConsentGrant",     back_populates="user", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return f"<User {self.email} role={self.role}>"

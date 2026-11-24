@@ -7,6 +7,8 @@ from db_models.breaks        import Break
 from db_models.calendar_cache import CalendarCache
 from db_models.llm_cache      import LLMCache
 from db_models.refresh_token  import RefreshToken
+from db_models.consent        import ConsentGrant
+from db_models.audit_log      import AuditLog
 
 __all__ = [
     "Base", "engine", "SessionLocal", "get_db",
@@ -18,4 +20,6 @@ __all__ = [
     "CalendarCache",
     "LLMCache",
     "RefreshToken",
+    "ConsentGrant",
+    "AuditLog",
 ]
