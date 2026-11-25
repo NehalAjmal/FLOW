@@ -138,3 +138,26 @@ def report(
     _clear_live(row.session_id)
     threshold = on_response(db, current_user.id, "reported")
     return _out(row, threshold)
+
+@router.get("/{intervention_id}/explain")
+def explain_intervention(
+    intervention_id: str,
+    db: DBSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    row = _load(
+        db,
+        intervention_id,
+        current_user
+    )
+
+    if row.explanation is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Explanation not available"
+        )
+
+    return {
+        "intervention_id": row.id,
+        **row.explanation,
+    }

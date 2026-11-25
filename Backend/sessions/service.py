@@ -13,6 +13,7 @@ from engine.deviation import DeviationEngine
 from engine.ultradian import UltradianEngine
 from engine.biometric import BiometricEngine
 from engine.adaptive_threshold import AdaptiveThresholdEngine
+from engine.explainer import build_explanation
 from engine.threshold import get_threshold, update_threshold
 import subprocess
 import os
@@ -287,6 +288,7 @@ def ingest_signal(
     trough_minute = live["trough_minute"]
 
     trough_pressure = 0.0
+    decision = None
 
     try:
         # ── ML SIGNALS ─────────────────────────
@@ -337,6 +339,8 @@ def ingest_signal(
     except Exception as e:
         print(" fallback:", e)
 
+        decision = None
+
         new_state = classify_state(kpm, window_switches, idle_seconds, active_window, session_minutes)
         new_score = compute_focus_score(kpm, window_switches, idle_seconds, session_minutes, new_state)
 
@@ -386,8 +390,38 @@ def ingest_signal(
         now = _utcnow()
         gate = gate_for_user(db, live["user_id"], now)
         if gate.allowed:
-            row = record_intervention(db, session, candidate_kind, candidate, new_score, now)
-            live["intervention"] = {**candidate, "id": row.id, "kind": candidate_kind}
+
+            explanation = build_explanation(
+                decision=decision,
+                state=new_state,
+                focus_score=normalized_score,
+                adaptive_threshold=(
+                    threshold_engine.get_threshold()
+                ),
+                trough_pressure=trough_pressure,
+                trigger=(
+                    "predicted_trough"
+                    if candidate_kind == "trough"
+                    else "sustained_low_focus"
+                ),
+                minutes_in_state=live["minutes_in_state"],
+            )
+
+            row = record_intervention(
+                db=db,
+                session=session,
+                kind=candidate_kind,
+                payload=candidate,
+                focus_score=new_score,
+                now=now,
+                explanation=explanation,
+            )
+
+            live["intervention"] = {
+                **candidate,
+                "id": row.id,
+                "kind": candidate_kind,
+            }
         else:
             live["gate_reason"] = gate.reason   # e.g. "quiet_hours"; handy when debugging
 
@@ -534,6 +568,10 @@ def get_session_status(db: DBSession, session_id: str):
                 "ear": min(1.0, fatigue.get("ear", 0.0) * 3),
             },
             "intervention": None,
+            "adaptive_threshold": get_threshold(
+                db,
+                session.user_id,
+            ),
             "minutes_to_trough": None,
         }
 
@@ -550,10 +588,9 @@ def get_session_status(db: DBSession, session_id: str):
         },
         "heart_rate_bpm": fatigue.get("heart_rate_bpm"),
         "intervention": live.get("intervention"),
-        "adaptive_threshold": (
-            engines["adaptive_threshold"].get_threshold()
-            if "adaptive_threshold" in engines
-            else AdaptiveThresholdEngine.DEFAULT_THRESHOLD
+        "adaptive_threshold": get_threshold(
+            db,
+            session.user_id,
         ),
         "minutes_to_trough": _minutes_to_trough(),
     }

@@ -86,8 +86,11 @@ def record_intervention(
     payload: dict,
     focus_score: Optional[float],
     now: datetime,
+    explanation: Optional[dict] = None,
 ) -> Intervention:
-    """Save a prompt that is about to be shown, and count it on the session."""
+
+    """Persist a prompt and its original decision evidence."""
+
     row = Intervention(
         user_id=session.user_id,
         session_id=session.id,
@@ -97,14 +100,19 @@ def record_intervention(
         action_label=payload.get("action_label"),
         focus_score=focus_score,
         shown_at=now,
+        explanation=explanation,
     )
+
     db.add(row)
-    session.interventions_total = (session.interventions_total or 0) + 1
+
+    session.interventions_total = (
+        session.interventions_total or 0
+    ) + 1
+
     db.commit()
     db.refresh(row)
+
     return row
-
-
 # ── Task 2: responses ─────────────────────────────────────
 
 RESPONSES = {"accepted", "dismissed", "snoozed"}
