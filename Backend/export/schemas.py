@@ -1,14 +1,14 @@
 # export/schemas.py
 # FIX: Python 3.9 needs List[int] not list[int]
 
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel
 
 
 class FocusDNARequest(BaseModel):
     user_name: str
     peak_hours: List[int]
-    cycle_length_minutes: int
+    cycle_length_minutes: Optional[int] = None   # null until the learner has 3 sessions
     weekly_focus_score: float
     best_focus_day: str
     total_sessions_this_week: int
@@ -18,7 +18,7 @@ class FocusDNARequest(BaseModel):
 class FocusDNAResponse(BaseModel):
     user_name: str
     peak_hours_formatted: List[str]
-    cycle_length_minutes: int
+    cycle_length_minutes: Optional[int] = None   # null until the learner has 3 sessions
     weekly_focus_score: float
     best_focus_day: str
     total_sessions_this_week: int

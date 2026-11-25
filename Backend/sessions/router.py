@@ -18,6 +18,7 @@ from llm.client import get_gemini_client, get_model_name
 from llm.prompts import stuck_prompt
 from .schemas import StuckRequest, StuckResponse, StuckSuggestion
 from . import service
+from insights.service import learned_cycle
 
 router = APIRouter()
 
@@ -191,8 +192,8 @@ def pre_check(
 
     return {
         "recommendation": recommendation,
-        # learner exports ultradian_cycle_minutes; seeded demo data uses ultradian_period
-        "suggested_duration_min": int(params.get("ultradian_cycle_minutes") or params.get("ultradian_period") or 50),
+        # Your learned cycle once the learner really has one (3+ sessions), else a plain 50-minute suggestion.
+        "suggested_duration_min": int((learned_cycle(current_user) or {}).get("value") or 50),
         "warnings": [],   # calendar warnings added here once calendar_google is connected
     }
 
@@ -249,8 +250,8 @@ async def get_stuck_suggestions(
     Makes a live Gemini API call with full session context.
     Requires user auth and active 'llm' consent grant.
     """
-    from consent.service import has_consent
-    if not has_consent(db, current_user.id, "llm"):
+    from settings_app.service import feature_allowed
+    if not feature_allowed(db, current_user.id, "llm"):    # consent AND the Settings switch
         raise HTTPException(
             status_code=403,
             detail="llm_consent_required",

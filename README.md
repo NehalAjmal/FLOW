@@ -61,7 +61,8 @@ GOOGLE_CLIENT_ID=<your-google-client-id>
     ```
 4.  **Run Setup Script:**
     ```powershell
-    python setup.py install
+    python setup.py
+    python create_team.py "Your team name"   # prints the company code and admin key
     ```
 5.  **Database Preparation:** Ensure MySQL is running and create the database:
     ```sql

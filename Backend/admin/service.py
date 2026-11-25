@@ -12,6 +12,7 @@ from db_models.session import Session
 from db_models.team import Team
 from consent.service import has_consent
 from .schemas import AdminDashboardResponse, BurnoutFlag, TrendPoint
+from team import metrics
 
 MIN_ADMIN_TEAM_THRESHOLD = 5
 
@@ -33,7 +34,7 @@ def _empty_dashboard(group_size: int = 0, suppressed: bool = False, reason: Opti
     )
 
 
-def get_admin_dashboard(db: DBSession, team_id: Optional[str]) -> AdminDashboardResponse:
+def get_admin_dashboard(db: DBSession, team_id: Optional[str], tz=None) -> AdminDashboardResponse:
     """
     Build the full admin dashboard payload for a team.
     Enforces privacy threshold: metrics withheld below 5 members.
@@ -151,12 +152,23 @@ def get_admin_dashboard(db: DBSession, team_id: Optional[str]) -> AdminDashboard
             avg_score=day_avg
         ))
 
-    state_distribution = {
-        "deep_work": active_now,
-        "stuck": 0,
-        "fatigue": 0,
-        "passive": max(0, group_size - active_now),
-    }
+    # What the live sessions are in right now, from each one's latest tick.
+    # (It used to call everyone not in a session "passive", which was invented.)
+    now_aware = now.replace(tzinfo=timezone.utc)
+    state_distribution = {}
+    for s in db.query(Session).filter(Session.user_id.in_(employee_ids), Session.end_time == None).all():
+        if not metrics.is_live(s, now_aware) or not s.signal_log:
+            continue
+        state = s.signal_log[-1].get("state")
+        if state:
+            state_distribution[state] = state_distribution.get(state, 0) + 1
+
+    # Quietest weekday hour for the team over 14 days; "--:--" until there's enough data.
+    zone = tz or timezone.utc
+    window = metrics.meeting_window(
+        metrics.load_sessions(db, employee_ids, now_aware - timedelta(days=14), now_aware + timedelta(seconds=1)),
+        zone, now_aware)
+    best_window = f"{window['start']} - {window['end']}" if window else "--:--"
 
     return AdminDashboardResponse(
         group_size=group_size,
@@ -170,7 +182,7 @@ def get_admin_dashboard(db: DBSession, team_id: Optional[str]) -> AdminDashboard
         avg_duration_min=avg_duration,
         company_code=company_code,
         burnout_flags_count=len(burnout_flags),
-        best_meeting_window="14:00 - 16:00",
+        best_meeting_window=best_window,
         trend_7_days=trend,
         burnout_flags=burnout_flags,
         state_distribution=state_distribution,
