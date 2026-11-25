@@ -86,11 +86,18 @@ class PatternLearner:
         trough = self._compute_trough_minute(session_data, timestamps)
         trough_history.append(trough)
 
-        return self._export_model(
+        updated_model = self._export_model(
             hourly_fatigue, session_lengths,
             keystroke_history, switch_history, trough_history,
         )
 
+        # Preserve the user's adaptive intervention threshold.
+        if "adaptive_threshold" in prev_params:
+            updated_model["parameters"]["adaptive_threshold"] = (
+                prev_params["adaptive_threshold"]
+            )
+
+        return updated_model
     # ─────────────────────────────────────────────
     # SESSION DURATION
     # ─────────────────────────────────────────────

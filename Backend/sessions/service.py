@@ -12,6 +12,8 @@ from engine.decision import DecisionEngine, compute_trough_pressure
 from engine.deviation import DeviationEngine
 from engine.ultradian import UltradianEngine
 from engine.biometric import BiometricEngine
+from engine.adaptive_threshold import AdaptiveThresholdEngine
+from interventions.gating import check_gate
 import subprocess
 import os
 import sys
@@ -134,6 +136,9 @@ def start_session(
 
     #  PER-SESSION ENGINES (ultradian clock starts now)
     engines = _new_engines()
+    engines["adaptive_threshold"] = AdaptiveThresholdEngine(
+        threshold=params.get("adaptive_threshold")
+    )
     engines["ultradian"] = UltradianEngine(cycle_minutes=cycle_minutes)
     engines["ultradian"].start()
 
@@ -172,6 +177,7 @@ def start_session(
         "minutes_in_state": 0,
         "session_start": _utcnow(),
         "intervention": None,
+        "last_intervention_at": None,
         "agent_process": agent_process,
         "engines": engines,
         "user_id": user_id,
@@ -205,6 +211,9 @@ def _rehydrate_live(db: DBSession, session: Session) -> dict:
     cycle_minutes = int(params.get("ultradian_cycle_minutes") or params.get("ultradian_period") or DEFAULT_ULTRADIAN_CYCLE)
 
     engines = _new_engines()
+    engines["adaptive_threshold"] = AdaptiveThresholdEngine(
+        threshold=params.get("adaptive_threshold")
+    )
     start = _as_aware_utc(session.start_time) or _utcnow()
     # Resume the ultradian clock from the real start time
     engines["ultradian"] = UltradianEngine(cycle_minutes=cycle_minutes)
@@ -216,6 +225,7 @@ def _rehydrate_live(db: DBSession, session: Session) -> dict:
         "minutes_in_state": 0,
         "session_start": start,
         "intervention": None,
+        "last_intervention_at": None,
         "agent_process": None,
         "engines": engines,
         "user_id": session.user_id,
@@ -337,16 +347,30 @@ def ingest_signal(
         "active_window": active_window,
     })
 
-    #  PREDICTIVE INTERVENTION
-    if trough_pressure > 0.8 and not live["intervention"]:
-        live["intervention"] = {
-            "title": "Upcoming focus dip",
-            "message": "You're nearing a natural dip in focus. Consider taking a break.",
-            "action_label": "Take Break"
-        }
+    # ── ADAPTIVE INTERVENTION ─────────────────────
+    threshold_engine = live["engines"]["adaptive_threshold"]
+    normalized_score = max(0.0, min(1.0, new_score / 100.0))
+    now = _utcnow()
+    gate = check_gate(
+        now_utc=now,
+        last_prompt_at=live.get("last_intervention_at"),
+    )
 
-    elif live["minutes_in_state"] > 5 and not live["intervention"]:
-        live["intervention"] = get_intervention(new_state)
+    if not live["intervention"] and gate.allowed:
+        if trough_pressure > 0.8:
+            live["intervention"] = {
+                "title": "Upcoming focus dip",
+                "message": "You're nearing a natural dip in focus. Consider taking a break.",
+                "action_label": "Take Break"
+            }
+        elif (
+            live["minutes_in_state"] > 5
+            and threshold_engine.should_intervene(normalized_score)
+        ):
+            live["intervention"] = get_intervention(new_state)
+
+        if live["intervention"]:
+            live["last_intervention_at"] = now
 
     # ── DB LOG ───────────────────────────────
     # FIX: list() creates a NEW object so SQLAlchemy detects the change.
@@ -377,10 +401,37 @@ def ingest_signal(
 
 def handle_intervention_response(db: DBSession, session_id: str, response: str):
     live = _live_sessions.get(session_id)
-    if live:
-        if response in ["dismissed", "accepted"]:
-            live["intervention"] = None
-    return {"status": "ok", "response": response}
+    if not live or not live.get("intervention"):
+        return {"status": "ok", "response": response}
+    if response not in ("accepted", "dismissed"):
+        return {"status": "ok", "response": response}
+
+    user = db.query(User).filter(User.id == live["user_id"]).first()
+    if user is None:
+        return {"status": "error", "message": "User not found"}
+
+    pattern_model = dict(user.pattern_model or {})
+    parameters = dict(pattern_model.get("parameters") or {})
+    threshold_engine = AdaptiveThresholdEngine(
+        threshold=parameters.get(
+            "adaptive_threshold",
+            live["engines"]["adaptive_threshold"].get_threshold()
+        )
+    )
+    new_threshold = threshold_engine.update(response)
+    parameters["adaptive_threshold"] = new_threshold
+    pattern_model["parameters"] = parameters
+    pattern_model.setdefault("schema_version", "learning_v3")
+    user.pattern_model = pattern_model
+    db.commit()
+
+    live["engines"]["adaptive_threshold"] = threshold_engine
+    live["intervention"] = None
+    return {
+        "status": "ok",
+        "response": response,
+        "adaptive_threshold": new_threshold
+    }
 
 # ── GET STATUS ─────────────────────────
 
@@ -434,6 +485,11 @@ def get_session_status(db: DBSession, session_id: str):
         },
         "heart_rate_bpm": fatigue.get("heart_rate_bpm"),
         "intervention": live.get("intervention"),
+        "adaptive_threshold": (
+            engines["adaptive_threshold"].get_threshold()
+            if "adaptive_threshold" in engines
+            else AdaptiveThresholdEngine.DEFAULT_THRESHOLD
+        ),
         "minutes_to_trough": _minutes_to_trough(),
     }
 
