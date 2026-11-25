@@ -33,3 +33,10 @@ class StuckResponse(BaseModel):
     suggestions: List[StuckSuggestion]
     encouragement: str
     session_id: str
+
+
+class CameraMetrics(BaseModel):
+    fatigue_score: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
+    ear: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
+    heart_rate_bpm: float | None = Field(default=None, gt=0, le=250, allow_inf_nan=False)
+    hr_confidence: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)

@@ -1,5 +1,5 @@
 from typing import Optional
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session as DBSession
 
 from db_models.user import User
@@ -16,17 +16,14 @@ from engine.biometric import BiometricEngine
 from engine.adaptive_threshold import AdaptiveThresholdEngine
 from engine.explainer import build_explanation
 from engine.threshold import get_threshold, update_threshold
-import subprocess
-import os
-import sys
 from learning.engine import PatternLearner
 from interventions.service import PROMPT_STATES, gate_for_user, record_intervention
 from breaks_app import service as breaks_service
 from db_models.breaks import Break
 
 
-#  FATIGUE SERVICE
-from ml_models.fatigue_model import fatigue_service
+from sessions.schemas import CameraMetrics
+from settings_app.service import feature_allowed
 
 _live_sessions: dict = {}
 
@@ -93,23 +90,29 @@ def _learned_params(db: DBSession, user_id: str) -> dict:
 
 
 def _latest_hr_hrv(db: DBSession, session_id: str):
-    """Latest real heart-rate signal for this session: DB readings first
-    (Apple Watch / rPPG ingest), then the live webcam rPPG estimate."""
-    row = (
-        db.query(BiometricReading)
-        .filter(BiometricReading.session_id == session_id)
-        .order_by(BiometricReading.recorded_at.desc())
-        .first()
-    )
+    session = db.get(Session, session_id)
+    if not session:
+        return None
+    row = (db.query(BiometricReading)
+           .filter(BiometricReading.session_id == session_id,
+                   BiometricReading.user_id == session.user_id,
+                   BiometricReading.source == "apple_watch")
+           .order_by(BiometricReading.recorded_at.desc()).first())
     if row and row.heart_rate_bpm and row.hrv_sdnn:
-        return float(row.heart_rate_bpm), float(row.hrv_sdnn)
-
-    # live webcam rPPG (same process) — HR only, gated by confidence
-    state = fatigue_service.get_state()
-    hr = state.get("heart_rate_bpm")
-    if hr and state.get("hr_confidence", 0.0) >= 0.15:
-        return float(hr), None
+        if (_utcnow() - _as_aware_utc(row.recorded_at)).total_seconds() <= 90:
+            return float(row.heart_rate_bpm), float(row.hrv_sdnn)
     return None
+
+
+def current_camera(db, session):
+    live = _live_sessions.get(session.id, {})
+    if session.end_time is not None or not feature_allowed(db, session.user_id, "camera"):
+        live.pop("camera", None)
+        return {}
+    at = live.get("camera_at")
+    if at is None or (_utcnow() - at).total_seconds() > 60:
+        return {}
+    return live.get("camera", {})
 
 
 # ── START SESSION ─────────────────────────────────────────
@@ -145,35 +148,6 @@ def start_session(
     engines["ultradian"] = UltradianEngine(cycle_minutes=cycle_minutes)
     engines["ultradian"].start()
 
-    #  START FATIGUE TRACKING (CAMERA OPENS HERE ONLY IF GRANTED)
-    from settings_app.service import feature_allowed
-    camera_allowed = feature_allowed(db, user_id, "camera")   # consent AND the Settings switch
-    if camera_allowed:
-        try:
-            fatigue_service.start()
-        except Exception as e:
-            print("fatigue start failed:", e)
-    else:
-        print(f"[Privacy] Camera consent not granted for user {user_id}. Webcam disabled.")
-
-    #  START KEYBOARD/MOUSE LOCAL AGENT WITH AUTH TOKEN
-    agent_process = None
-    try:
-        from auth.utils import create_access_token
-        agent_token = create_access_token(data={"sub": user_id, "role": "agent"}, expires_delta=timedelta(hours=24))
-        agent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "agent"))
-        token_path = os.path.join(agent_dir, ".agent_token")
-        try:
-            with open(token_path, "w") as f:
-                f.write(agent_token)
-        except Exception:
-            pass
-
-        agent_script = os.path.abspath(os.path.join(agent_dir, "main.py"))
-        agent_process = subprocess.Popen([sys.executable, agent_script, session.id, agent_token])
-    except Exception as e:
-        print("Agent start failed:", e)
-
     _live_sessions[session.id] = {
         "state": "deep_work",
         "focus_score": 75.0,
@@ -181,7 +155,6 @@ def start_session(
         "session_start": _utcnow(),
         "intervention": None,
         "last_intervention_at": None,
-        "agent_process": agent_process,
         "engines": engines,
         "user_id": user_id,
         "trough_minute": int(params.get("trough_minute") or DEFAULT_TROUGH_MINUTE),
@@ -236,7 +209,6 @@ def _rehydrate_live(db: DBSession, session: Session) -> dict:
         "session_start": start,
         "intervention": None,
         "last_intervention_at": None,
-        "agent_process": None,
         "engines": engines,
         "user_id": session.user_id,
         "trough_minute": int(params.get("trough_minute") or DEFAULT_TROUGH_MINUTE),
@@ -257,6 +229,7 @@ def ingest_signal(
     mouse_distance_px,
     active_window,
     timestamp,
+    camera: Optional[CameraMetrics] = None,
 ):
     active_window = normalize_category(active_window)
     live = _live_sessions.get(session_id)
@@ -274,6 +247,10 @@ def ingest_signal(
         # Server restarted mid-session: rebuild state instead of erroring out
         live = _rehydrate_live(db, session)
         print(f" rehydrated live session {session_id[:8]} from DB")
+
+    live["camera"] = camera.model_dump() if camera is not None and feature_allowed(db, session.user_id, "camera") else {}
+    live["camera_at"] = _utcnow()
+    fatigue = live["camera"].get("fatigue_score")
 
     # ── TIME CALCULATION ─────────────────────
     session_minutes = int(
@@ -300,7 +277,6 @@ def ingest_signal(
         )
         ultradian = engines["ultradian"].compute()
 
-        fatigue = fatigue_service.get_state().get("fatigue_score")
 
         # Use measured biometric data only; never substitute fatigue as a proxy.
         hr_hrv = _latest_hr_hrv(db, session_id)
@@ -343,7 +319,7 @@ def ingest_signal(
         new_state = classify_state(kpm, window_switches, idle_seconds, active_window, session_minutes)
         new_score = compute_focus_score(kpm, window_switches, idle_seconds, session_minutes, new_state)
 
-        deviation = ultradian = biometric = fatigue = 0.0
+        deviation = ultradian = biometric = None
 
     # ── STATE TRACKING ───────────────────────
     if new_state == live["state"]:
@@ -454,17 +430,8 @@ def ingest_signal(
     return live
 
 def drop_live_session(session_id: str) -> None:
-    """Account deleted mid-session: stop the agent and camera, forget the live state."""
-    live = _live_sessions.pop(session_id, None)
-    if live and live.get("agent_process"):
-        try:
-            live["agent_process"].terminate()
-        except Exception:
-            pass
-    try:
-        fatigue_service.stop()
-    except Exception:
-        pass
+    """Forget server-side session state; hardware belongs to the client."""
+    _live_sessions.pop(session_id, None)
 
 
 def reset_ultradian(session_id: str) -> None:
@@ -544,7 +511,7 @@ def get_session_status(db: DBSession, session_id: str):
         return None
 
     live = _live_sessions.get(session_id)
-    fatigue = fatigue_service.get_state()
+    fatigue = current_camera(db, session)
 
     def _minutes_to_trough() -> Optional[int]:
         """Minutes until the session's learned trough, or None when unknown."""
@@ -564,8 +531,8 @@ def get_session_status(db: DBSession, session_id: str):
             "signals": {
                 "behavioral": None,
                 "ultradian": None,
-                "biometric": fatigue.get("fatigue_score", 0.0),
-                "ear": min(1.0, fatigue.get("ear", 0.0) * 3),
+                "biometric": fatigue.get("fatigue_score"),
+                "ear": min(1.0, fatigue["ear"] * 3) if fatigue.get("ear") is not None else None,
             },
             "intervention": None,
             "adaptive_threshold": get_threshold(
@@ -583,8 +550,8 @@ def get_session_status(db: DBSession, session_id: str):
         "signals": {
             "behavioral": min(1.0, live.get("keystrokes_per_min", 0) / 40),
             "ultradian": engines["ultradian"].compute() if engines else None,
-            "biometric": fatigue.get("fatigue_score", 0.0),
-            "ear": min(1.0, fatigue.get("ear", 0.0) * 3),
+            "biometric": fatigue.get("fatigue_score"),
+            "ear": min(1.0, fatigue["ear"] * 3) if fatigue.get("ear") is not None else None,
         },
         "heart_rate_bpm": fatigue.get("heart_rate_bpm"),
         "intervention": live.get("intervention"),
@@ -615,7 +582,7 @@ def _prepare_learning_data(signal_log):
             },
 
             "output": {
-                "fatigue": entry.get("fatigue", 0.0),
+                "fatigue": entry.get("fatigue"),
                 "deviation": entry.get("deviation", 0.0)
             }
         })
@@ -651,19 +618,7 @@ def end_session(
 
     db.commit()
 
-    live_data = _live_sessions.pop(session_id, None)
-    if live_data and live_data.get("agent_process"):
-        try:
-            live_data["agent_process"].terminate()
-            print("Stopped tracking agent.")
-        except Exception:
-            pass
-
-    # Stop fatigue camera too since session ended
-    try:
-        fatigue_service.stop()
-    except Exception:
-        pass
+    _live_sessions.pop(session_id, None)
 
     # ── PATTERN LEARNING (per-user, stateless) ─────────
     learning_data = _prepare_learning_data(log)

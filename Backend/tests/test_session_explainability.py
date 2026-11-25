@@ -95,11 +95,7 @@ def db(monkeypatch):
     )
 
     # No physical camera or heart-rate device.
-    monkeypatch.setattr(
-        service.fatigue_service,
-        "get_state",
-        lambda: {},
-    )
+    monkeypatch.setattr(service, "feature_allowed", lambda *args: True)
 
     monkeypatch.setattr(
         service,
@@ -163,11 +159,7 @@ def prepare_live(
         lambda: ultradian,
     )
 
-    monkeypatch.setattr(
-        service.fatigue_service,
-        "get_state",
-        lambda: {"fatigue_score": fatigue},
-    )
+    live["test_camera"] = service.CameraMetrics(fatigue_score=fatigue)
 
     monkeypatch.setattr(
         service,
@@ -205,6 +197,7 @@ def ingest(
         mouse_distance_px=100,
         active_window=window,
         timestamp=NOW.isoformat(),
+        camera=service._live_sessions.get(SESSION_ID, {}).get("test_camera"),
     )
 
 

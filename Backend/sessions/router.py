@@ -16,7 +16,7 @@ from db_models.user import User
 from db_models.session import Session as SessionModel
 from llm.client import get_gemini_client, get_model_name
 from llm.prompts import stuck_prompt
-from .schemas import ActivityCategoryRequest, StuckRequest, StuckResponse, StuckSuggestion
+from .schemas import CameraMetrics, ActivityCategoryRequest, StuckRequest, StuckResponse, StuckSuggestion
 from . import service
 from insights.service import learned_cycle
 
@@ -43,6 +43,7 @@ class SignalRequest(ActivityCategoryRequest):
     idle_seconds: int
     mouse_distance_px: int
     timestamp: str
+    camera: Optional[CameraMetrics] = None
 
 
 class InterventionResponse(BaseModel):
@@ -100,6 +101,7 @@ def receive_signal(
         mouse_distance_px=payload.mouse_distance_px,
         active_window=payload.app_category,
         timestamp=payload.timestamp,
+        camera=payload.camera,
     )
     if live is None:
         raise HTTPException(status_code=404, detail="Session not found")

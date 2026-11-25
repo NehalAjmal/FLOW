@@ -62,7 +62,7 @@ class PatternLearner:
         for point in session_data:
             timestamps.append(_parse_ts(point.get("timestamp")))
             fatigue_vals.append(
-                point.get("output", {}).get("fatigue", 0.0)
+                point.get("output", {}).get("fatigue")
             )
             inp = point.get("input", {})
             keystrokes.append(inp.get("keystroke_count", 0))
@@ -73,6 +73,8 @@ class PatternLearner:
 
         # Hourly fatigue profile
         for t, f in zip(timestamps, fatigue_vals):
+            if not isinstance(f, (int, float)) or isinstance(f, bool) or not np.isfinite(f) or not 0 <= f <= 1:
+                continue
             hour = t.hour if t else datetime.utcnow().hour
             hourly_fatigue.setdefault(hour, []).append(f)
 
