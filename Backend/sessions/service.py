@@ -13,6 +13,7 @@ from engine.deviation import DeviationEngine
 from engine.ultradian import UltradianEngine
 from engine.biometric import BiometricEngine
 from engine.adaptive_threshold import AdaptiveThresholdEngine
+from engine.threshold import get_threshold, update_threshold
 from interventions.gating import check_gate
 import subprocess
 import os
@@ -365,6 +366,7 @@ def ingest_signal(
             }
         elif (
             live["minutes_in_state"] > 5
+            and new_state in {"fatigue", "stuck", "passive", "distracted"}
             and threshold_engine.should_intervene(normalized_score)
         ):
             live["intervention"] = get_intervention(new_state)
@@ -398,39 +400,68 @@ def ingest_signal(
 
     return live
 
+def clear_live_intervention(session_id: str) -> None:
+    """
+    Clear the live intervention without adjusting the threshold.
 
-def handle_intervention_response(db: DBSession, session_id: str, response: str):
+    Called by the database-backed intervention router.
+    """
+
     live = _live_sessions.get(session_id)
+
+    if live:
+        live["intervention"] = None
+
+
+def handle_intervention_response(
+    db: DBSession,
+    session_id: str,
+    response: str,
+):
+    """
+    Handle responses from the existing session-based endpoint.
+
+    Threshold persistence is delegated to engine.threshold.
+    """
+
+    live = _live_sessions.get(session_id)
+
     if not live or not live.get("intervention"):
-        return {"status": "ok", "response": response}
-    if response not in ("accepted", "dismissed"):
-        return {"status": "ok", "response": response}
+        return {
+            "status": "ok",
+            "response": response,
+        }
 
-    user = db.query(User).filter(User.id == live["user_id"]).first()
-    if user is None:
-        return {"status": "error", "message": "User not found"}
+    if response not in {"accepted", "dismissed"}:
+        return {
+            "status": "ok",
+            "response": response,
+        }
 
-    pattern_model = dict(user.pattern_model or {})
-    parameters = dict(pattern_model.get("parameters") or {})
-    threshold_engine = AdaptiveThresholdEngine(
-        threshold=parameters.get(
-            "adaptive_threshold",
-            live["engines"]["adaptive_threshold"].get_threshold()
-        )
+    # Persistent prompts must be answered through the
+    # intervention-ID endpoint, not this legacy handler.
+    if live["intervention"].get("id"):
+        return {
+            "status": "error",
+            "message": "Use the intervention response endpoint",
+        }
+
+    new_threshold = update_threshold(
+        db=db,
+        user_id=live["user_id"],
+        response=response,
     )
-    new_threshold = threshold_engine.update(response)
-    parameters["adaptive_threshold"] = new_threshold
-    pattern_model["parameters"] = parameters
-    pattern_model.setdefault("schema_version", "learning_v3")
-    user.pattern_model = pattern_model
-    db.commit()
 
-    live["engines"]["adaptive_threshold"] = threshold_engine
-    live["intervention"] = None
+    live["engines"]["adaptive_threshold"] = (
+        AdaptiveThresholdEngine(threshold=new_threshold)
+    )
+
+    clear_live_intervention(session_id)
+
     return {
         "status": "ok",
         "response": response,
-        "adaptive_threshold": new_threshold
+        "adaptive_threshold": new_threshold,
     }
 
 # ── GET STATUS ─────────────────────────
