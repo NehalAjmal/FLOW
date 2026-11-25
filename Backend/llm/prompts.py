@@ -3,6 +3,9 @@
 # They are functions that take data and return a formatted prompt string.
 # This keeps all AI prompt logic in one place — easy to tune and test.
 
+from agent.categories import normalize_category
+
+
 def stuck_prompt(task_declared: str, difficulty: str,
                  stuck_duration_minutes: int, active_window: str,
                  session_duration_minutes: int) -> str:
@@ -21,7 +24,7 @@ Here is their exact situation:
 - Task they declared: "{task_declared}"
 - Difficulty level they set: {difficulty}
 - Time spent stuck on this specific problem: {stuck_duration_minutes} minutes
-- Active application/window: {active_window}
+- Active application category: {normalize_category(active_window)}
 - Total session duration so far: {session_duration_minutes} minutes
 
 Your job is to give them 3 concrete, specific strategies to get unstuck.

@@ -108,8 +108,7 @@ def run():
 
             try:
                 keystrokes    = keyboard_tracker.get_and_reset()
-                switches      = window_tracker.get_and_reset()
-                active_window = window_tracker.last_window or "Unknown"
+                switches, app_category = window_tracker.snapshot_and_reset()
                 mouse_dist    = get_and_reset_mouse_distance()
 
                 # Idle = seconds since last keystroke, capped at SEND_INTERVAL
@@ -121,13 +120,13 @@ def run():
                     "window_switches":   switches,
                     "idle_seconds":      idle_seconds,
                     "mouse_distance_px": mouse_dist,
-                    "active_window":     active_window,
+                    "app_category":      app_category,
                     "timestamp":         datetime.now().isoformat(),
                 }
 
                 print(f" [{datetime.now().strftime('%H:%M:%S')}] "
                       f"keys={keystrokes} switches={switches} "
-                      f"idle={idle_seconds}s window='{active_window[:30]}'")
+                      f"idle={idle_seconds}s category='{app_category}'")
 
                 res = requests.post(
                     f"{BACKEND_URL}/session/signal",
@@ -147,7 +146,7 @@ def run():
                     print("    Session not found on backend — stopping agent.")
                     sys.exit(0)
                 else:
-                    print(f"     Backend error {res.status_code}: {res.text[:80]}")
+                    print(f"     Backend error {res.status_code}")
 
             except requests.exceptions.ConnectionError:
                 print("    Cannot reach backend — is the local server running on port 8002?")

@@ -6,6 +6,7 @@ from db_models.user import User
 from db_models.session import Session
 from db_models.biometric import BiometricReading
 from llm.cache import get_intervention
+from agent.categories import normalize_category
 
 #  ML ENGINE IMPORTS
 from engine.decision import DecisionEngine, compute_trough_pressure
@@ -33,10 +34,7 @@ _live_sessions: dict = {}
 AGENT_TICK_MINUTES = 0.5
 SIGNAL_LOG_CAP = 600
 
-PASSIVE_APPS = {
-    "youtube", "netflix", "twitter", "instagram", "facebook",
-    "reddit", "tiktok", "twitch", "spotify", "discord"
-}
+PASSIVE_CATEGORIES = {"entertainment"}
 
 DEFAULT_TROUGH_MINUTE = 45
 DEFAULT_ULTRADIAN_CYCLE = 90
@@ -45,7 +43,7 @@ DEFAULT_ULTRADIAN_CYCLE = 90
 # ── FALLBACK LOGIC (DO NOT REMOVE) ─────────────────────────
 
 def classify_state(kpm, switches, idle, window, minutes):
-    if any(p in window.lower() for p in PASSIVE_APPS):
+    if normalize_category(window) in PASSIVE_CATEGORIES:
         return "passive"
     if minutes >= 90 and kpm < 10:
         return "fatigue"
@@ -260,6 +258,7 @@ def ingest_signal(
     active_window,
     timestamp,
 ):
+    active_window = normalize_category(active_window)
     live = _live_sessions.get(session_id)
 
     # ── DB SESSION ───────────────────────────
@@ -359,7 +358,7 @@ def ingest_signal(
         "keystrokes_per_min": kpm,
         "window_switches": window_switches,
         "idle_seconds": idle_seconds,
-        "active_window": active_window,
+        "app_category": active_window,
     })
 
     #  INTERVENTION: pick a candidate, then let gating decide
@@ -437,7 +436,8 @@ def ingest_signal(
         "keystrokes": keystroke_count,
         "switches": window_switches,
         "idle": idle_seconds,
-        "window": active_window,
+        "window": active_window,  # legacy key; category only
+        "app_category": active_window,
         "state": new_state,
         "score": round(new_score, 1),
 

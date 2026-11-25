@@ -16,7 +16,7 @@ from db_models.user import User
 from db_models.session import Session as SessionModel
 from llm.client import get_gemini_client, get_model_name
 from llm.prompts import stuck_prompt
-from .schemas import StuckRequest, StuckResponse, StuckSuggestion
+from .schemas import ActivityCategoryRequest, StuckRequest, StuckResponse, StuckSuggestion
 from . import service
 from insights.service import learned_cycle
 
@@ -36,13 +36,12 @@ class SessionStartResponse(BaseModel):
     message: str
 
 
-class SignalRequest(BaseModel):
+class SignalRequest(ActivityCategoryRequest):
     session_id: str
     keystroke_count: int
     window_switches: int
     idle_seconds: int
     mouse_distance_px: int
-    active_window: str
     timestamp: str
 
 
@@ -99,7 +98,7 @@ def receive_signal(
         window_switches=payload.window_switches,
         idle_seconds=payload.idle_seconds,
         mouse_distance_px=payload.mouse_distance_px,
-        active_window=payload.active_window,
+        active_window=payload.app_category,
         timestamp=payload.timestamp,
     )
     if live is None:
@@ -264,7 +263,7 @@ async def get_stuck_suggestions(
         task_declared=payload.task_declared,
         difficulty=payload.difficulty,
         stuck_duration_minutes=payload.stuck_duration_minutes,
-        active_window=payload.active_window,
+        active_window=payload.app_category,
         session_duration_minutes=payload.session_duration_minutes
     )
 

@@ -194,7 +194,7 @@ def ingest(
     keystrokes=10,
     switches=2,
     idle=5,
-    window="Visual Studio Code",
+    window="development",
 ):
     return service.ingest_signal(
         db=db,
