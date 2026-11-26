@@ -7,7 +7,7 @@ import json
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session as DBSession
-from pydantic import BaseModel
+from pydantic import BaseModel, AliasChoices, Field
 from typing import List
 
 from db_models.base import get_db
@@ -26,11 +26,30 @@ router = APIRouter()
 # ── Schemas for new endpoints ──────────────────────────────────────────────────
 
 class SessionStartRequest(BaseModel):
-    task_description: str
-    declared_difficulty: str   # light | moderate | heavy
-    planned_duration_min: int
+    task_description: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "task_description",
+            "task_text",
+            "task",
+        ),
+    )
 
+    declared_difficulty: str = Field(
+        validation_alias=AliasChoices(
+            "declared_difficulty",
+            "demand",
+        ),
+    )
 
+    planned_duration_min: int = Field(
+        validation_alias=AliasChoices(
+            "planned_duration_min",
+            "planned_minutes",
+        ),
+    )
+
+    share_task_with_llm: bool = False
 class SessionStartResponse(BaseModel):
     session_id: str
     message: str
@@ -170,6 +189,21 @@ def end_session(
         self_rated_quality=payload.self_rated_quality,
     )
     return result
+
+@router.post("/{session_id}/end")
+def end_session_by_id(
+    session_id: str,
+    db: DBSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return end_session(
+        payload=SessionEndRequest(
+            session_id=session_id,
+            self_rated_quality=None,
+        ),
+        db=db,
+        current_user=current_user,
+    )
 
 
 @router.get("/pre-check")
