@@ -22,27 +22,48 @@ else:
 
 class KeystrokeTracker:
     def __init__(self):
-        from pynput import keyboard
         self.count = 0
         self.last_press_time = None
-        self.listener = keyboard.Listener(on_press=self.on_press)
+        self.listener = None
+        self._lock = threading.Lock()
 
     def on_press(self, key):
-        self.count += 1
-        self.last_press_time = time.time()
+        with self._lock:
+            self.count += 1
+            self.last_press_time = time.monotonic()
 
     def start(self):
+        from pynput import keyboard
+        if self.listener is not None:
+            raise RuntimeError("Tracker already started")
+        with self._lock:
+            self.count = 0
+            self.last_press_time = None
+        self.listener = keyboard.Listener(on_press=self.on_press)
         self.listener.start()
 
+    def stop(self):
+        if self.listener is not None:
+            self.listener.stop()
+            self.listener.join(timeout=2)
+            if self.listener.is_alive():
+                raise RuntimeError("Keyboard listener did not stop")
+            self.listener = None
+        with self._lock:
+            self.count = 0
+            self.last_press_time = None
+
     def get_and_reset(self):
-        val = self.count
-        self.count = 0
-        return val
+        with self._lock:
+            val = self.count
+            self.count = 0
+            return val
 
     def idle_seconds(self, cap: int) -> int:
-        if self.last_press_time is None:
-            return cap
-        return min(cap, int(time.time() - self.last_press_time))
+        with self._lock:
+            if self.last_press_time is None:
+                return cap
+            return max(0, min(cap, int(time.monotonic() - self.last_press_time)))
 
 
 # Foreground identity is local only. Never retrieve window titles.
