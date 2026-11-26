@@ -6,6 +6,7 @@ import 'account_controllers.dart';
 import 'auth_controller.dart';
 import 'data_providers.dart';
 import 'session_controller.dart';
+import 'sensor_bridge.dart';
 
 /// Everything Home needs for its first frame, loaded *before* the app is
 /// shown, so it arrives whole instead of filling in piece by piece.
@@ -18,9 +19,11 @@ import 'session_controller.dart';
 /// Re-runs when the signed-in user changes; signed out there is nothing to load.
 final bootReadyProvider = FutureProvider<void>((ref) async {
   if (ref.watch(currentUserIdProvider) == null) return;
+  ref.watch(sensorBridgeProvider);
   final now = DateTime.now();
   final today = DateTime(now.year, now.month, now.day);
-  Future<void> quiet(Future<Object?> f) => f.then<void>((_) {}, onError: (Object _) {});
+  Future<void> quiet(Future<Object?> f) =>
+      f.then<void>((_) {}, onError: (Object _) {});
   await Future.wait([
     quiet(ref.read(settingsProvider.future)),
     quiet(ref.read(consentProvider.future)),
