@@ -22,10 +22,16 @@ final sensorBridgeProvider = Provider<void>((ref) {
   var busy = false;
   var dirty = false;
   var sending = false;
-  String? lastTimestamp;
+  DateTime? lastTimestamp;
+  String? lastSession;
 
   String? desiredSession() {
-    if (disposed || ref.read(currentUserIdProvider) != user) return null;
+    if (disposed ||
+        ref.read(currentUserIdProvider) != user ||
+        ref.read(sensorLogoutProvider) ||
+        ref.read(sensorPrivacyHoldProvider).contains(ConsentScope.behavior)) {
+      return null;
+    }
     final consent = ref.read(consentProvider);
     final live = ref.read(liveSessionProvider);
     if (consent.isLoading ||
@@ -40,7 +46,10 @@ final sensorBridgeProvider = Provider<void>((ref) {
   }
 
   bool cameraAllowed() {
-    if (desiredSession() == null) return false;
+    if (desiredSession() == null ||
+        ref.read(sensorPrivacyHoldProvider).contains(ConsentScope.camera)) {
+      return false;
+    }
     final settings = ref.read(settingsProvider);
     return !settings.isLoading &&
         !settings.hasError &&
@@ -89,8 +98,13 @@ final sensorBridgeProvider = Provider<void>((ref) {
           data['session_id'] != id) {
         return;
       }
-      final timestamp = data['timestamp'] as String;
-      if (timestamp == lastTimestamp) return;
+      final timestamp = DateTime.parse(data['timestamp'] as String).toUtc();
+      if (lastSession == id &&
+          lastTimestamp != null &&
+          !timestamp.isAfter(lastTimestamp!)) {
+        return;
+      }
+      lastSession = id;
       lastTimestamp = timestamp;
       sending = true;
       unawaited(
@@ -105,6 +119,8 @@ final sensorBridgeProvider = Provider<void>((ref) {
       );
     }
   });
+  ref.listen(sensorLogoutProvider, (_, _) => unawaited(reconcile()));
+  ref.listen(sensorPrivacyHoldProvider, (_, _) => unawaited(reconcile()));
   ref.listen(liveSessionProvider, (_, _) => unawaited(reconcile()));
   ref.listen(consentProvider, (_, _) => unawaited(reconcile()));
   ref.listen(settingsProvider, (_, _) => unawaited(reconcile()));

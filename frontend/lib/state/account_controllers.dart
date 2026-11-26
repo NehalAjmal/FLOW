@@ -6,6 +6,22 @@ import '../api/models/consent.dart';
 import '../api/models/settings.dart';
 import 'auth_controller.dart';
 
+final sensorPrivacyHoldProvider =
+    NotifierProvider<SensorPrivacyHold, Set<ConsentScope>>(
+      SensorPrivacyHold.new,
+    );
+
+class SensorPrivacyHold extends Notifier<Set<ConsentScope>> {
+  @override
+  Set<ConsentScope> build() {
+    ref.watch(currentUserIdProvider);
+    return {};
+  }
+
+  void hold(ConsentScope scope) => state = {...state, scope};
+  void release(ConsentScope scope) => state = {...state}..remove(scope);
+}
+
 /// Requires a signed-in user; throws otherwise so screens never render stale
 /// data from a previous account.
 String _requireUser(Ref ref) {
@@ -26,6 +42,11 @@ class ConsentController extends AsyncNotifier<ConsentState> {
   /// Grant or withdraw one scope. Withdrawing also switches the matching
   /// feature off so settings never claim something consent forbids.
   Future<void> set(ConsentScope scope, bool granted) async {
+    final sensorScope =
+        scope == ConsentScope.behavior || scope == ConsentScope.camera;
+    if (sensorScope && !granted) {
+      ref.read(sensorPrivacyHoldProvider.notifier).hold(scope);
+    }
     final current = await future;
     final version = current.policyVersion ?? 'unversioned';
     final entry = await ref
@@ -33,6 +54,9 @@ class ConsentController extends AsyncNotifier<ConsentState> {
         .set(scope, granted: granted, policyVersion: version);
     if (!ref.mounted) return;
     state = AsyncData(current.copyWithEntry(entry));
+    if (sensorScope && granted) {
+      ref.read(sensorPrivacyHoldProvider.notifier).release(scope);
+    }
 
     if (!granted) {
       final patch = switch (scope) {
@@ -87,8 +111,8 @@ class SettingsController extends AsyncNotifier<UserSettings> {
     need(patch.llmEnabled, ConsentScope.llm);
 
     final previous = state.value;
-    if (previous != null) {
-      state = AsyncData(patch.applyTo(previous)); // optimistic
+    if (previous != null && patch.cameraEnabled != true) {
+      state = AsyncData(patch.applyTo(previous));
     }
     try {
       final saved = await ref.read(settingsApiProvider).update(patch);
@@ -100,8 +124,8 @@ class SettingsController extends AsyncNotifier<UserSettings> {
         } catch (_) {}
       }
     } catch (_) {
-      if (ref.mounted && previous != null) {
-        state = AsyncData(previous); // roll back
+      if (ref.mounted && previous != null && patch.cameraEnabled != false) {
+        state = AsyncData(previous);
       }
       rethrow;
     }
