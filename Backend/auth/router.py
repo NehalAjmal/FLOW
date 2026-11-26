@@ -2,6 +2,7 @@ from typing import Optional
 from datetime import datetime, timedelta, timezone
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
@@ -24,7 +25,7 @@ from auth.utils import (
     SECRET_KEY, ALGORITHM,
 )
 from auth.totp import generate_totp_secret, verify_totp_code, get_otpauth_url
-from auth.dependencies import require_admin
+from auth.dependencies import require_admin, get_current_user, security
 from auth.rate_limit import login_rate_limiter
 from admin import invites as invite_service
 from consent.service import set_user_consent
@@ -390,3 +391,37 @@ def setup_mfa(
         otpauth_url=url,
     )
 
+# ── /me ─────────────────────────────────────────────────────
+
+@router.get("/me", status_code=status.HTTP_200_OK)
+def get_my_profile(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        payload = jwt.decode(
+            credentials.credentials,
+            SECRET_KEY,
+            algorithms=[ALGORITHM],
+        )
+
+        # Temporary tokens must not grant profile access.
+        if payload.get("purpose") is not None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid access token",
+            )
+
+    except jwt.PyJWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired access token",
+        )
+
+    return {
+        "user_id": current_user.id,
+        "name": current_user.full_name,
+        "email": current_user.email,
+        "role": current_user.role,
+        "team_id": current_user.team_id,
+    }
