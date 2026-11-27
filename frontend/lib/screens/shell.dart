@@ -1,4 +1,6 @@
 import 'package:material_ui/material_ui.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -12,6 +14,7 @@ import '../state/data_providers.dart';
 import '../state/schedule_runner.dart';
 import '../state/session_controller.dart';
 import '../theme/motion.dart';
+import '../theme/style.dart';
 import '../theme/tokens.dart';
 import '../ui/appear.dart';
 import '../ui/brand/wordmark.dart';
@@ -19,7 +22,11 @@ import '../ui/dial.dart';
 import '../ui/loading_blocks.dart';
 import '../ui/pressable.dart';
 import '../widgets/common.dart';
+import '../tutorial/coach.dart';
+import '../tutorial/tour.dart';
 import 'intervention_card.dart';
+import '../ui/style_morph.dart';
+import '../core/session_clock.dart';
 
 class _NavItem {
   const _NavItem(this.path, this.label, this.icon, {this.shortcut});
@@ -51,6 +58,7 @@ class AppShell extends ConsumerWidget {
     final main = [
       const _NavItem(Routes.home, 'Home', Icons.home_outlined, shortcut: 'Ctrl+1'),
       const _NavItem(Routes.patterns, 'Insights', Icons.insights_outlined, shortcut: 'Ctrl+2'),
+      const _NavItem(Routes.tasks, 'Tasks', Icons.checklist_rtl, shortcut: 'Ctrl+3'),
       if (user?.hasTeam ?? false) const _NavItem(Routes.team, 'Team', Icons.groups_outlined),
       if (user?.isAdmin ?? false) const _NavItem(Routes.admin, 'Admin', Icons.admin_panel_settings_outlined),
     ];
@@ -63,87 +71,112 @@ class AppShell extends ConsumerWidget {
         ? location == Routes.home
         : location.startsWith(i.path) || (i.path == Routes.patterns && location.startsWith(Routes.history));
 
-    return Scaffold(
-      backgroundColor: p.bg,
-      body: Stack(
-        children: [
-          Row(
+    // The rail's tooltips promise these shortcuts; they were never bound.
+    final mod = defaultTargetPlatform == TargetPlatform.macOS;
+    SingleActivator key(LogicalKeyboardKey k) => SingleActivator(k, control: !mod, meta: mod);
+    return CallbackShortcuts(
+      bindings: {
+        key(LogicalKeyboardKey.digit1): () => context.go(Routes.home),
+        key(LogicalKeyboardKey.digit2): () => context.go(Routes.patterns),
+        key(LogicalKeyboardKey.digit3): () => context.go(Routes.tasks),
+        key(LogicalKeyboardKey.comma): () => context.go(Routes.settings),
+        // the style switch from anywhere, so the change plays over the page
+        // you are on (it starts where you last clicked)
+        SingleActivator(LogicalKeyboardKey.keyL, control: !mod, meta: mod, shift: true): () {
+          final prefs = ref.read(desktopPrefsProvider);
+          ref.read(desktopPrefsProvider.notifier).set(prefs.copyWith(style: prefs.style == FlowStyle.solid ? FlowStyle.line : FlowStyle.solid));
+        },
+      },
+      child: Focus(
+        includeSemantics: false,
+        child: Scaffold(
+          backgroundColor: p.bg,
+          body: Stack(
             children: [
-              const SizedBox(width: 12),
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                child: _Rail(
-                  main: main,
-                  bottom: bottom,
-                  isActive: isActive,
-                  liveSession: live != null && location != Routes.home,
-                  onLogout: () => _confirmLogout(context, ref, sessionRunning: live != null),
-                ),
-              ),
-              const SizedBox(width: 24),
-              Expanded(
-                child: Column(
-                  children: [
-                    const _PauseBanner(),
-                    // just signed in: one loader until Home's data is in, so
-                    // the page arrives whole (the launch screen covers this on
-                    // a cold start)
-                    Expanded(
-                      child: ref.watch(bootReadyProvider).isLoading
-                          ? const Center(child: LoadingBlocks(height: 160, label: 'Getting your day ready'))
-                          : AppearScope(route: location, child: child),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          // The nudge arrives and leaves; it never just appears. In: drops 28 px
-          // into place under the header with a small overshoot while fading in.
-          // Out (taken, snoozed, dismissed): lifts back and fades, faster.
-          // Top right, not bottom right: at the bottom it sat on top of Home's
-          // session controls (Pause · Pop out · End).
-          Positioned(
-            right: 20,
-            top: 78,
-            width: 400,
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 460),
-              reverseDuration: const Duration(milliseconds: 200),
-              switchInCurve: Curves.easeOutBack,
-              switchOutCurve: Curves.easeIn,
-              layoutBuilder: (current, previous) => Stack(alignment: Alignment.topRight, children: [...previous, ?current]),
-              transitionBuilder: (child, a) {
-                if (Motion.reduced(context)) return FadeTransition(opacity: a, child: child);
-                // `a` overshoots 1 (easeOutBack): clamp it for the opacity
-                return AnimatedBuilder(
-                  animation: a,
-                  child: child,
-                  builder: (context, child) => Opacity(
-                    opacity: (a.value / 0.6).clamp(0.0, 1.0),
-                    child: Transform.translate(
-                      offset: Offset(0, -28 * (1 - a.value)),
-                      child: Transform.scale(scale: 0.94 + 0.06 * a.value, alignment: Alignment.topRight, child: child),
+              Row(
+                children: [
+                  const SizedBox(width: 12),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: CoachMark(
+                      'rail',
+                      child: _Rail(
+                        main: main,
+                        bottom: bottom,
+                        isActive: isActive,
+                        liveSession: live != null && location != Routes.home,
+                        onLogout: () => _confirmLogout(context, ref, sessionRunning: live != null),
+                      ),
                     ),
                   ),
-                );
-              },
-              // one nudge on screen: not the corner card under a takeover
-              child: switch (ref.watch(windowModeProvider).isTakeover ? null : live?.pendingInterventionId) {
-                final id? => InterventionCard(key: ValueKey(id), interventionId: id),
-                null => const SizedBox.shrink(key: ValueKey('no-nudge')),
-              },
-            ),
+                  const SizedBox(width: 24),
+                  Expanded(
+                    child: Column(
+                      children: [
+                        const _PauseBanner(),
+                        // just signed in: one loader until Home's data is in, so
+                        // the page arrives whole (the launch screen covers this on
+                        // a cold start)
+                        Expanded(
+                          child: ref.watch(bootReadyProvider).isLoading
+                              ? const Center(child: LoadingBlocks(height: 160, label: 'Getting your day ready'))
+                              : AppearScope(route: location, child: child),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              // The nudge arrives and leaves; it never just appears. In: drops 28 px
+              // into place under the header with a small overshoot while fading in.
+              // Out (taken, snoozed, dismissed): lifts back and fades, faster.
+              // Top right, not bottom right: at the bottom it sat on top of Home's
+              // session controls (Pause · Pop out · End).
+              Positioned(
+                right: 20,
+                top: 78,
+                width: 400,
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 460),
+                  reverseDuration: const Duration(milliseconds: 200),
+                  switchInCurve: Curves.easeOutBack,
+                  switchOutCurve: Curves.easeIn,
+                  layoutBuilder: (current, previous) => Stack(alignment: Alignment.topRight, children: [...previous, ?current]),
+                  transitionBuilder: (child, a) {
+                    if (Motion.reduced(context)) return FadeTransition(opacity: a, child: child);
+                    // `a` overshoots 1 (easeOutBack): clamp it for the opacity
+                    return AnimatedBuilder(
+                      animation: a,
+                      child: child,
+                      builder: (context, child) => Opacity(
+                        opacity: (a.value / 0.6).clamp(0.0, 1.0),
+                        child: Transform.translate(
+                          offset: Offset(0, -28 * (1 - a.value)),
+                          child: Transform.scale(scale: 0.94 + 0.06 * a.value, alignment: Alignment.topRight, child: child),
+                        ),
+                      ),
+                    );
+                  },
+                  // one nudge on screen: not the corner card under a takeover
+                  child: switch (ref.watch(windowModeProvider).isTakeover ? null : live?.pendingInterventionId) {
+                    final id? => InterventionCard(key: ValueKey(id), interventionId: id),
+                    null => const SizedBox.shrink(key: ValueKey('no-nudge')),
+                  },
+                ),
+              ),
+              // a routine about to start: "Weekly review starts in 9 s · Start now · Skip"
+              if (ref.watch(scheduleRunnerProvider) case final pending?)
+                Positioned(
+                  top: 18,
+                  left: 0,
+                  right: 0,
+                  child: Center(child: _StartingBanner(pending: pending)),
+                ),
+              // the first-run tour, over Home only, never over a running session
+              if (location == Routes.home && live == null && ref.watch(tourProvider)) const TourOverlay(),
+            ],
           ),
-          // a routine about to start: "Weekly review starts in 9 s · Start now · Skip"
-          if (ref.watch(scheduleRunnerProvider) case final pending?)
-            Positioned(
-              top: 18,
-              left: 0,
-              right: 0,
-              child: Center(child: _StartingBanner(pending: pending)),
-            ),
-        ],
+        ),
       ),
     );
   }
@@ -307,7 +340,7 @@ class _RailSessionRing extends ConsumerWidget {
     final now = ref.watch(clockProvider).value ?? DateTime.now();
     if (live == null) return const SizedBox.shrink();
     final s = live.session;
-    final frac = (s.elapsedAt(now).inSeconds / (s.plannedMinutes * 60)).clamp(0.0, 1.0);
+    final frac = (s.focusAt(now, ref.watch(pausedSinceProvider)).inSeconds / (s.plannedMinutes * 60)).clamp(0.0, 1.0);
     return SizedBox(
       width: 56,
       height: 44,
@@ -382,11 +415,11 @@ class FlowHeader extends ConsumerWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: FlowType.headline(p, size: 26)),
-                if (subtitle != null) ...[
-                  const SizedBox(height: 2),
-                  Text(flowCaps(subtitle!), style: FlowType.label(p, size: 10, color: p.text3)),
-                ],
+                MorphMark(
+                  kind: MorphKind.text,
+                  child: Text(title, style: FlowType.headline(p, size: 26)),
+                ),
+                if (subtitle != null) ...[const SizedBox(height: 2), Text(flowCaps(subtitle!), style: FlowType.label(p, size: 10, color: p.text3))],
               ],
             ),
           ),

@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../tutorial/coach.dart';
 import '../api/models/intervention.dart';
 import '../screens/intervention_card.dart' show showReportDialog;
 import '../state/account_controllers.dart';
@@ -15,6 +16,7 @@ import '../theme/tokens.dart';
 import '../ui/kit.dart';
 import '../widgets/common.dart';
 import 'window_controller.dart';
+import '../core/session_clock.dart';
 
 /// A break suggestion that takes the screen (or a floating window: the same
 /// view, it scales with its size).
@@ -138,7 +140,7 @@ class _NudgeTakeoverState extends ConsumerState<NudgeTakeover> with TickerProvid
     final iv = ref.watch(interventionProvider(widget.interventionId)).value;
     final live = ref.watch(liveSessionProvider).value;
     final minutes = iv == null ? 5 : (iv.suggestedBreakSec / 60).round().clamp(1, 99);
-    final elapsed = live?.session.elapsedAt(DateTime.now()).inMinutes;
+    final elapsed = live?.session.focusAt(DateTime.now(), ref.read(pausedSinceProvider)).inMinutes;
     final why = _why ? ref.watch(explanationProvider((widget.interventionId, ExplainDetail.short))).value : null;
     final snooze = _snoozeOptions;
 
@@ -284,11 +286,14 @@ class _NudgeTakeoverState extends ConsumerState<NudgeTakeover> with TickerProvid
                     runSpacing: 10,
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
-                      Pressable(
-                        tone: PressableTone.primary,
-                        onPressed: iv == null || _busy ? null : _take,
-                        padding: EdgeInsets.symmetric(horizontal: roomy ? 26 : 16, vertical: roomy ? 16 : 10),
-                        child: Text('Take a $minutes min break', style: TextStyle(fontSize: roomy ? 16 : 13.5)),
+                      CoachMark(
+                        'take-break',
+                        child: Pressable(
+                          tone: PressableTone.primary,
+                          onPressed: iv == null || _busy ? null : _take,
+                          padding: EdgeInsets.symmetric(horizontal: roomy ? 26 : 16, vertical: roomy ? 16 : 10),
+                          child: Text('Take a $minutes min break', style: TextStyle(fontSize: roomy ? 16 : 13.5)),
+                        ),
                       ),
                       for (final m in snooze.take(3))
                         Pressable(

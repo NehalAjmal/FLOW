@@ -4,7 +4,10 @@ import 'dart:ui' as ui;
 import 'package:flutter/rendering.dart';
 import 'package:material_ui/material_ui.dart';
 
+import 'style_morph.dart';
+
 import '../theme/motion.dart';
+import '../theme/style.dart';
 import '../theme/tokens.dart';
 
 /// Light ⇄ dark as something that *spreads*: the new theme takes the page
@@ -32,17 +35,29 @@ import '../theme/tokens.dart';
 /// the change) or, when Flow changes by itself, at the logo's o.
 /// Reduced motion: a 150 ms cross-fade.
 class ThemeSpread extends StatefulWidget {
-  const ThemeSpread({super.key, required this.brightness, required this.child});
+  const ThemeSpread({super.key, required this.brightness, this.style = FlowStyle.solid, required this.child});
 
   /// The brightness the app should be showing.
   final Brightness brightness;
 
-  /// Builds the app for the brightness currently *applied* (which lags
-  /// [brightness] by the instant it takes to capture the old page).
-  final Widget Function(BuildContext context, Brightness applied, Widget Function(Widget app) wrap) child;
+  /// Solid or Line. A change of style plays the transformation ([MorphPainter]):
+  /// every marked element changes in its own way;
+  /// a change of brightness plays the style's own transition: the infection
+  /// ([SpreadPainter]) in Solid, the plotter ([PlotterPainter]) in Line.
+  final FlowStyle style;
+
+  /// Builds the app for the look currently *applied* (which lags the wanted
+  /// one by the instant it takes to capture the old page).
+  final Widget Function(BuildContext context, Brightness applied, FlowStyle style, Widget Function(Widget app) wrap) child;
 
   /// How long the spread takes.
   static const duration = Duration(milliseconds: 1250);
+
+  /// The Line style's light/dark change.
+  static const plotDuration = Duration(milliseconds: 1150);
+
+  /// Solid ⇄ Line.
+  static const morphDuration = Duration(milliseconds: 1700);
 
   @override
   State<ThemeSpread> createState() => ThemeSpreadState();
@@ -52,12 +67,15 @@ class ThemeSpreadState extends State<ThemeSpread> with SingleTickerProviderState
   final _boundary = GlobalKey();
   late final _c = AnimationController(vsync: this, duration: ThemeSpread.duration);
   late Brightness _applied = widget.brightness;
+  late FlowStyle _style = widget.style;
+  _Kind _kind = _Kind.spread;
   ui.Image? _old;
   Offset _origin = const Offset(40, 40);
   Offset? _lastDown;
   DateTime _lastDownAt = DateTime.fromMillisecondsSinceEpoch(0);
   int _seed = 1;
   bool _fadeOnly = false;
+  List<MorphRegion> _regions = const [];
 
   /// True while a spread is on screen (for tests).
   bool get spreading => _old != null;
@@ -73,7 +91,7 @@ class ThemeSpreadState extends State<ThemeSpread> with SingleTickerProviderState
   @override
   void didUpdateWidget(ThemeSpread oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.brightness != _applied) _begin(widget.brightness);
+    if (widget.brightness != _applied || widget.style != _style) _begin(widget.brightness, widget.style);
   }
 
   void _clear() {
@@ -83,7 +101,9 @@ class ThemeSpreadState extends State<ThemeSpread> with SingleTickerProviderState
     img?.dispose();
   }
 
-  void _begin(Brightness target) {
+  void _begin(Brightness target, FlowStyle style) {
+    _kind = style != _style ? _Kind.morph : (style == FlowStyle.line ? _Kind.plot : _Kind.spread);
+    _style = style;
     ui.Image? snap;
     // Nothing to spread over before the app is visible (the launch screen is
     // still up), or if the page has not been painted yet.
@@ -105,8 +125,16 @@ class ThemeSpreadState extends State<ThemeSpread> with SingleTickerProviderState
     // from the control that asked for it, else from the logo's o (top left)
     _origin = recent && _lastDown != null ? _lastDown! : Offset(math.min(40, size.width / 2), math.min(40, size.height / 2));
     _seed = DateTime.now().microsecondsSinceEpoch & 0xFFFF;
+    // where each element is, measured on the page as it was painted
+    _regions = _kind == _Kind.morph && snap != null && ro is RenderBox ? MorphMark.collect(ro, _origin) : const [];
     if (snap != null) {
-      _c.duration = _fadeOnly ? Motion.fade : ThemeSpread.duration;
+      _c.duration = _fadeOnly
+          ? Motion.fade
+          : switch (_kind) {
+              _Kind.spread => ThemeSpread.duration,
+              _Kind.plot => ThemeSpread.plotDuration,
+              _Kind.morph => ThemeSpread.morphDuration,
+            };
       _c.forward(from: 0);
     }
     // didUpdateWidget runs during build: this state is picked up by the same build
@@ -120,8 +148,9 @@ class ThemeSpreadState extends State<ThemeSpread> with SingleTickerProviderState
   }
 
   @override
-  Widget build(BuildContext context) => widget.child(context, _applied, (app) {
-    final accent = (_applied == Brightness.dark ? FlowPalette.dark : FlowPalette.light).accent;
+  Widget build(BuildContext context) => widget.child(context, _applied, _style, (app) {
+    final target = FlowPalette.pick(_applied, line: _style == FlowStyle.line);
+    final accent = target.accent;
     return Listener(
       // remember where the change was asked for
       onPointerDown: (e) {
@@ -138,7 +167,20 @@ class ThemeSpreadState extends State<ThemeSpread> with SingleTickerProviderState
               child: IgnorePointer(
                 child: RepaintBoundary(
                   child: CustomPaint(
-                    painter: SpreadPainter(image: _old!, t: _c, origin: _origin, seed: _seed, rim: accent, fadeOnly: _fadeOnly),
+                    painter: switch (_kind) {
+                      _Kind.spread => SpreadPainter(image: _old!, t: _c, origin: _origin, seed: _seed, rim: accent, fadeOnly: _fadeOnly),
+                      _Kind.plot => PlotterPainter(image: _old!, t: _c, origin: _origin, ink: target.text1, index: accent, fadeOnly: _fadeOnly),
+                      _Kind.morph => MorphPainter(
+                        image: _old!,
+                        t: _c,
+                        origin: _origin,
+                        regions: _regions,
+                        toLine: _style == FlowStyle.line,
+                        ink: target.text1,
+                        lead: accent,
+                        fadeOnly: _fadeOnly,
+                      ),
+                    },
                   ),
                 ),
               ),
@@ -148,6 +190,8 @@ class ThemeSpreadState extends State<ThemeSpread> with SingleTickerProviderState
     );
   });
 }
+
+enum _Kind { spread, plot, morph }
 
 /// One small colony ahead of the front.
 class _Spore {
@@ -282,11 +326,13 @@ class SpreadPainter extends CustomPainter {
     // the rim: the live edge, in the accent (= now). Fades as the spread ends.
     final alive = (1 - Curves.easeIn.transform(((p - 0.72) / 0.28).clamp(0.0, 1.0))) * (p < 0.04 ? p / 0.04 : 1);
     if (alive > 0) {
+      // (perf) the halo is two wide strokes, not a blur: a MaskFilter on a
+      // 220-point path every frame was the costliest thing in the spread
       final halo = Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 7
-        ..color = rim.withValues(alpha: 0.13 * alive)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5);
+        ..strokeJoin = StrokeJoin.round
+        ..strokeWidth = 9
+        ..color = rim.withValues(alpha: 0.06 * alive);
       final line = Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.6
@@ -295,13 +341,114 @@ class SpreadPainter extends CustomPainter {
       canvas.save();
       canvas.clipRect(rect);
       canvas.drawPath(body, halo);
+      canvas.drawPath(
+        body,
+        halo
+          ..strokeWidth = 4
+          ..color = rim.withValues(alpha: 0.09 * alive),
+      );
       canvas.drawPath(body, line);
-      // spores get the thin line only where they are still outside the body
-      canvas.drawPath(Path.combine(PathOperation.difference, live, body), line..strokeWidth = 1.1);
+      // spores get the thin line only where they are still outside the body:
+      // an even-odd clip (page minus body) instead of Path.combine per frame
+      canvas.clipPath(
+        Path()
+          ..fillType = PathFillType.evenOdd
+          ..addRect(rect)
+          ..addPath(body, Offset.zero),
+      );
+      canvas.drawPath(live, line..strokeWidth = 1.1);
       canvas.restore();
     }
   }
 
   @override
   bool shouldRepaint(SpreadPainter o) => o.image != image || o.origin != origin || o.seed != seed || o.rim != rim;
+}
+
+/// Hairline's easing (lucasmarkes/hairline): fast out, long settle.
+
+/// Line style, light ⇄ dark: the plotter. A tick ring (the dial's own ring)
+/// spreads from the switch; the new page is inside it, and the dial's dot
+/// index rides the ring round as it goes, like a pen carriage.
+class PlotterPainter extends CustomPainter {
+  PlotterPainter({required this.image, required this.t, required this.origin, required this.ink, required this.index, this.fadeOnly = false})
+    : super(repaint: t);
+
+  final ui.Image image;
+  final Animation<double> t;
+  final Offset origin;
+  final Color ink;
+  final Color index;
+  final bool fadeOnly;
+
+  /// Ring radius at progress [p], for a page whose farthest corner is [far].
+  static double radiusAt(double p, double far) => (far + 40) * Curves.easeInOutCubic.transform(p.clamp(0.0, 1.0));
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final src = Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble());
+    final p = t.value;
+    if (fadeOnly) {
+      canvas.drawImageRect(image, src, rect, Paint()..color = Color.fromRGBO(0, 0, 0, 1 - p));
+      return;
+    }
+    final far = SpreadPainter.reach(size, origin);
+    final r = radiusAt(p, far);
+    // the old page, with a clean hole where the new one already is
+    canvas.save();
+    canvas.clipPath(
+      Path()
+        ..fillType = PathFillType.evenOdd
+        ..addRect(rect)
+        ..addOval(Rect.fromCircle(center: origin, radius: r)),
+    );
+    canvas.drawImageRect(image, src, rect, Paint()..filterQuality = FilterQuality.medium);
+    canvas.restore();
+    if (r < 2) return;
+
+    final alive = p > 0.86 ? (1 - p) / 0.14 : 1.0;
+    // ticks every ~7 px of arc, a long one every tenth; the ring turns as it grows
+    final n = (2 * math.pi * r / 7).clamp(24, 900).round();
+    final spin = p * 1.4;
+    final ticks = Path(), majors = Path();
+    for (var i = 0; i < n; i++) {
+      final a = i / n * math.pi * 2 + spin;
+      final dir = Offset(math.cos(a), math.sin(a));
+      final major = i % 10 == 0;
+      final from = origin + dir * (r - 1.5), to = origin + dir * (r - (major ? 15 : 7));
+      (major ? majors : ticks)
+        ..moveTo(from.dx, from.dy)
+        ..lineTo(to.dx, to.dy);
+    }
+    canvas.save();
+    canvas.clipRect(rect);
+    final pen = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.1
+      ..color = ink.withValues(alpha: 0.9 * alive);
+    canvas.drawPath(ticks, pen);
+    canvas.drawPath(majors, pen..strokeWidth = 1.5);
+    // the ring's own hairline, just outside the ticks
+    canvas.drawCircle(
+      origin,
+      r,
+      pen
+        ..strokeWidth = 1
+        ..color = ink.withValues(alpha: 0.35 * alive),
+    );
+    // a faint echo ring behind the front: the page being drawn in
+    final echo = r * 0.82;
+    if (echo > 20) {
+      canvas.drawCircle(origin, echo, pen..color = ink.withValues(alpha: 0.12 * alive));
+    }
+    // the index dot rides the ring
+    final da = -math.pi / 2 + p * math.pi * 3;
+    final dot = origin + Offset(math.cos(da), math.sin(da)) * (r - 28);
+    canvas.drawCircle(dot, math.min(6.0, 2.5 + r / 80), Paint()..color = index.withValues(alpha: alive));
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(PlotterPainter o) => o.image != image || o.origin != origin || o.ink != ink || o.index != index;
 }

@@ -8,6 +8,10 @@ import '../theme/tokens.dart';
 import '../ui/loading_blocks.dart';
 
 String errorText(Object e) => switch (e) {
+  // a route the server doesn't have (FastAPI's bare 404) rather than a
+  // missing thing: say so plainly instead of "Not Found"
+  ApiError(isNotFound: true, :final message) when message == 'Not Found' || message.startsWith('Request failed') =>
+    "This server doesn't support that yet.",
   ApiError(:final message) => message,
   StateError(:final message) => message,
   _ => 'Something went wrong.',

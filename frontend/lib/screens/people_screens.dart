@@ -13,6 +13,7 @@ import '../router/routes.dart';
 import '../state/data_providers.dart';
 import '../theme/motion.dart';
 import '../theme/tokens.dart';
+import '../ui/blocks.dart' show paintLineBar;
 import '../ui/feature_note.dart';
 import '../ui/kit.dart';
 import '../ui/loading_blocks.dart';
@@ -473,6 +474,8 @@ class _WeekBlocks extends CustomPainter {
         for (var k = x; k < x + w; k += 6) {
           c.drawLine(Offset(k, s.height - 3), Offset(math.min(k + 3, x + w), s.height - 3), dash);
         }
+      } else if (h >= 1 && p.line) {
+        paintLineBar(c, Rect.fromLTWH(x, s.height - h, w, h), p.lineData, strong: d == today, radius: 2.5);
       } else if (h >= 1) {
         final r = RRect.fromRectAndCorners(
           Rect.fromLTWH(x, s.height - h, w, h),
@@ -997,6 +1000,10 @@ class _LanesPainter extends CustomPainter {
           Demand.moderate => p.pastModerate,
           _ => p.pastHeavy,
         };
+        if (p.line) {
+          paintLineBar(c, Rect.fromLTRB(a, y + blockH / 2 - h, math.max(b, a + 2), y + blockH / 2), p.lineData, strong: x.demand == Demand.heavy);
+          continue;
+        }
         c.drawRRect(
           RRect.fromRectAndRadius(Rect.fromLTRB(a, y + blockH / 2 - h, math.max(b, a + 2), y + blockH / 2), const Radius.circular(2.5)),
           Paint()..color = color,
@@ -1044,11 +1051,31 @@ class _ResponsesPainter extends CustomPainter {
     final total = math.max(n.total, 1);
     final t = rise.isCompleted ? 1.0 : Motion.settleAt(rise.value * 1.1);
     final r = RRect.fromRectAndRadius(Offset.zero & s, const Radius.circular(3));
-    c.drawRRect(r, Paint()..color = p.recess);
+    if (!p.line) c.drawRRect(r, Paint()..color = p.recess);
     c.save();
     c.clipRRect(r);
     final a = s.width * n.taken / total * t;
     final b = s.width * n.snoozed / total * t;
+    if (p.line) {
+      // taken: close amber comb; snoozed: open comb; the rest stays empty
+      for (final (x0, w, gap) in [(0.0, a, 2.4), (a, b, 5.0)]) {
+        final comb = Paint()
+          ..color = p.amber.withValues(alpha: 0.85)
+          ..strokeWidth = p.ink * 0.8;
+        for (var k = x0 + gap / 2; k < x0 + w; k += gap) {
+          c.drawLine(Offset(k, 0), Offset(k, s.height), comb);
+        }
+      }
+      c.restore();
+      c.drawRRect(
+        r,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = p.ink * 0.9
+          ..color = p.text1,
+      );
+      return;
+    }
     c.drawRect(Rect.fromLTWH(0, 0, a, s.height), Paint()..color = p.amber);
     c.drawRect(Rect.fromLTWH(a, 0, b, s.height), Paint()..color = p.amber.withValues(alpha: 0.38));
     c.restore();
@@ -1079,6 +1106,10 @@ class _TrendsPainter extends CustomPainter {
     for (var i = 0; i < focus.length; i++) {
       final bh = h * (focus[i].value / peak) * 0.92 * t;
       if (bh < 1) continue;
+      if (p.line) {
+        paintLineBar(c, Rect.fromLTWH(i * slot + slot * 0.2, h - bh, slot * 0.6, bh), p.lineData, strong: i == focus.length - 1, radius: 1.5);
+        continue;
+      }
       c.drawRRect(
         RRect.fromRectAndCorners(
           Rect.fromLTWH(i * slot + slot * 0.2, h - bh, slot * 0.6, bh),
@@ -1139,7 +1170,9 @@ class _HoursPainter extends CustomPainter {
       final h = h0 + i;
       final v = hours[h] / peak;
       final bh = (base - 2) * v * t;
-      if (bh >= 1) {
+      if (bh >= 1 && p.line) {
+        paintLineBar(c, Rect.fromLTWH(i * slot + slot * 0.18, base - bh, slot * 0.64, bh), p.lineData, strong: v > 0.8);
+      } else if (bh >= 1) {
         c.drawRRect(
           RRect.fromRectAndCorners(
             Rect.fromLTWH(i * slot + slot * 0.18, base - bh, slot * 0.64, bh),
@@ -1175,9 +1208,36 @@ class _MixPainter extends CustomPainter {
   void paint(Canvas c, Size s) {
     final total = mix.light + mix.moderate + mix.heavy;
     final r = RRect.fromRectAndRadius(Offset.zero & s, const Radius.circular(3));
+    final t0 = rise.isCompleted ? 1.0 : Motion.settleAt(rise.value * 1.1);
+    if (p.line) {
+      // three comb densities in one outlined bar: sparse, medium, close
+      final pen = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = p.ink * 0.9
+        ..color = p.text1;
+      if (total > 0) {
+        c.save();
+        c.clipRRect(r);
+        var x = 0.0;
+        for (final (v, gap) in [(mix.light, 7.0), (mix.moderate, 4.0), (mix.heavy, 2.4)]) {
+          final w = s.width * v / total * t0;
+          final comb = Paint()
+            ..color = p.text1.withValues(alpha: 0.6)
+            ..strokeWidth = p.ink * 0.7;
+          for (var k = x + gap / 2; k < x + w; k += gap) {
+            c.drawLine(Offset(k, 0), Offset(k, s.height), comb);
+          }
+          x += w;
+          if (x < s.width - 1 && w > 0) c.drawLine(Offset(x, 0), Offset(x, s.height), pen);
+        }
+        c.restore();
+      }
+      c.drawRRect(r, pen);
+      return;
+    }
     c.drawRRect(r, Paint()..color = p.recess);
     if (total == 0) return;
-    final t = rise.isCompleted ? 1.0 : Motion.settleAt(rise.value * 1.1);
+    final t = t0;
     c.save();
     c.clipRRect(r);
     var x = 0.0;

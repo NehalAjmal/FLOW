@@ -40,8 +40,82 @@ class LiquidFill {
   }
 }
 
+/// The Line style, for painters that only get a colour (blocks, pillars).
+/// Set once per build from the applied palette (see app.dart); only one look
+/// is ever painted live at a time (a transition's old look is a snapshot).
+abstract final class LineInk {
+  static bool on = false;
+  static Color ink = const Color(0xFF1C1E1A);
+  static Color plate = const Color(0xFFE8ECE3);
+  static double width = 1;
+
+  /// Data marks: ink, or slate blue with the Line colour option.
+  static Color data = const Color(0xFF1C1E1A);
+
+  static void use(FlowPalette p) {
+    on = p.line;
+    ink = p.text1;
+    data = p.lineData;
+    plate = p.bg;
+    width = p.ink;
+  }
+
+  /// Meaning colours (verdigris, amber, ultramarine) survive as line colour;
+  /// stones (what happened) become plain ink.
+  static Color stroke(Color c) {
+    final hsl = HSLColor.fromColor(c);
+    return hsl.saturation > 0.38 && c.a > 0.5 ? c.withValues(alpha: 1) : data;
+  }
+
+  /// Comb spacing in px: dense enough to read as a mass, open enough to stay a line.
+  static const comb = 3.5;
+}
+
+/// Line style block: the silhouette as a plate (hides what is behind it),
+/// a bright outer edge, one dim crease, and a comb of hairlines on the front
+/// whose height is the reading (Hairline rule: bright outside, dim inside).
+void paintLineBlock(Canvas c, double x0, double x1, double base, double h, double depth, Color col) {
+  final top = base - h;
+  final d = math.min(depth, math.max(1.5, (x1 - x0) * 0.32));
+  final ink = LineInk.stroke(col);
+  final sil = Path()
+    ..moveTo(x0, base)
+    ..lineTo(x0, top)
+    ..lineTo(x0 + d, top - d)
+    ..lineTo(x1 + d, top - d)
+    ..lineTo(x1 + d, base - d)
+    ..lineTo(x1, base)
+    ..close();
+  c.drawPath(sil, Paint()..color = LineInk.plate);
+  final pen = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = LineInk.width * 0.9
+    ..strokeJoin = StrokeJoin.round
+    ..color = ink;
+  // comb on the front face
+  final comb = Path();
+  for (var x = x0 + 1.5; x <= x1 - 1; x += LineInk.comb) {
+    comb
+      ..moveTo(x, base)
+      ..lineTo(x, top);
+  }
+  c.drawPath(comb, pen..color = ink.withValues(alpha: 0.78));
+  c.drawPath(sil, pen..color = ink);
+  // the crease where front meets top and side, dim
+  c.drawPath(
+    Path()
+      ..moveTo(x0, top)
+      ..lineTo(x1, top)
+      ..lineTo(x1, base)
+      ..moveTo(x1, top)
+      ..lineTo(x1 + d, top - d),
+    pen..color = ink.withValues(alpha: 0.45),
+  );
+}
+
 /// A front-on block with a top and side face (the Score's block language).
 void paintSolidBlock(Canvas c, double x0, double x1, double base, double h, double depth, Color col, {bool shade = true}) {
+  if (LineInk.on) return paintLineBlock(c, x0, x1, base, h, depth, col);
   final top = base - h;
   final d = math.min(depth, math.max(1.5, (x1 - x0) * 0.32));
   c.drawPath(
@@ -128,6 +202,8 @@ void paintLiquidBlock(
     }
   }
   if (fill.level <= 0.001) return;
+  // Line: the block rises as a comb, no liquid surface
+  if (LineInk.on) return paintLineBlock(c, x0, x1, base, h * fill.level, depth, col);
   c.save();
   c.clipPath(liquidClip(x0, x1, base, h, depth, fill));
   paintSolidBlock(c, x0, x1, base, h, depth, col, shade: shade);
@@ -148,4 +224,43 @@ Path liquidClip(double x0, double x1, double base, double h, double depth, Liqui
     ..lineTo(x1 + d + 1, surface)
     ..lineTo(x1 + d + 1, base + 1)
     ..close();
+}
+
+/// Line style bar: an outlined plate with a comb inside. [strong] closes the
+/// comb up (today, the busiest hour) instead of switching to a heavier fill.
+void paintLineBar(Canvas c, Rect r, Color col, {bool strong = false, double radius = 2}) {
+  if (r.height < 1 || r.width < 1) return;
+  final ink = LineInk.stroke(col);
+  final rr = RRect.fromRectAndCorners(r, topLeft: Radius.circular(radius), topRight: Radius.circular(radius));
+  c.drawRRect(rr, Paint()..color = LineInk.plate);
+  final gap = strong ? LineInk.comb * 0.7 : LineInk.comb * 1.3;
+  final comb = Paint()
+    ..color = ink.withValues(alpha: strong ? 0.75 : 0.45)
+    ..strokeWidth = LineInk.width * 0.7;
+  c.save();
+  c.clipRRect(rr);
+  for (var x = r.left + gap / 2; x < r.right; x += gap) {
+    c.drawLine(Offset(x, r.top + 1), Offset(x, r.bottom), comb);
+  }
+  c.restore();
+  c.drawRRect(
+    rr,
+    Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = LineInk.width * 0.9
+      ..color = ink,
+  );
+}
+
+/// Line style area: a comb of hairlines under a curve, in place of a wash.
+void paintLineArea(Canvas c, Path area, Rect bounds, Color col, {double opacity = 1}) {
+  final comb = Paint()
+    ..color = LineInk.stroke(col).withValues(alpha: 0.35 * opacity)
+    ..strokeWidth = LineInk.width * 0.7;
+  c.save();
+  c.clipPath(area);
+  for (var x = bounds.left; x < bounds.right; x += 5) {
+    c.drawLine(Offset(x, bounds.top), Offset(x, bounds.bottom), comb);
+  }
+  c.restore();
 }
