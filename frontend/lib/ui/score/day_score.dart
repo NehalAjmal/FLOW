@@ -7,7 +7,9 @@ import '../../api/models/day.dart';
 import '../../api/models/insights.dart' show Confidence;
 import '../../api/models/session.dart';
 import '../../theme/motion.dart';
+import '../blocks.dart' show paintLineBlock;
 import '../../theme/tokens.dart';
+import '../style_morph.dart';
 
 /// Visible time range of the Score: auto-fit to the day (DESIGN_SPEC §6).
 /// From 30 min before the first thing to 30 min after the last planned thing
@@ -180,7 +182,9 @@ class _DayScoreState extends State<DayScore> with TickerProviderStateMixin {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => MorphMark(kind: MorphKind.chart, child: _morphBuild(context));
+
+  Widget _morphBuild(BuildContext context) {
     final p = FlowPalette.of(context);
     final isToday = DateUtils.isSameDay(widget.now, widget.day.date);
     return LayoutBuilder(
@@ -343,6 +347,8 @@ class _ScoreLayout {
       };
 }
 
+final _labels = <(String, double, Color, FontWeight, bool, TextScaler), TextPainter>{};
+
 class _ScorePainter extends CustomPainter {
   _ScorePainter({
     required this.p,
@@ -387,7 +393,10 @@ class _ScorePainter extends CustomPainter {
     bool caps = false,
     FontWeight w = FontWeight.w400,
   }) {
-    final tp = TextPainter(
+    // Labels repeat every frame (hover, the now line, rising blocks): lay
+    // each one out once and reuse it.
+    final key = (s, size, color ?? p.text3, w, caps, textScale);
+    final tp = _labels[key] ??= TextPainter(
       text: TextSpan(
         text: caps ? flowCaps(s) : s,
         style: FlowType.chart(
@@ -400,6 +409,7 @@ class _ScorePainter extends CustomPainter {
       textDirection: TextDirection.ltr,
       textScaler: textScale,
     )..layout();
+    if (_labels.length > 400) _labels.remove(_labels.keys.first)?.dispose();
     final dx = switch (align) {
       TextAlign.center => at.dx - tp.width / 2,
       TextAlign.right => at.dx - tp.width,
@@ -418,7 +428,11 @@ class _ScorePainter extends CustomPainter {
     final top = base - h;
     final w = math.max(1.0, x1 - x0);
     final depth = math.min(this.depth, math.max(2.0, w * 0.32));
-    if (fill != null) {
+    if (fill != null && p.line) {
+      // Line style: a comb of hairlines in the same slot, same height. A pale
+      // fill (the ghost's tint) is a plan, which the dashed outline carries.
+      if (fill != p.accentTint) paintLineBlock(c, x0, x1, base, h, depth, fill);
+    } else if (fill != null) {
       c.drawPath(
         Path()
           ..moveTo(x0, top)
@@ -620,22 +634,9 @@ class _ScorePainter extends CustomPainter {
       );
     }
 
-    // ── guides: 50% + nudge line ───────────────────────────────────────
-    final half = l.py(0.5), line = l.py(1.0);
-    c.drawPath(
-      _dash(
-        Path()
-          ..moveTo(_ScoreLayout.left, half)
-          ..lineTo(l.right, half),
-        1,
-        3,
-      ),
-      Paint()
-        ..color = p.hairline
-        ..strokeWidth = 0.8
-        ..style = PaintingStyle.stroke,
-    );
-    _text(c, '50%', Offset(l.right, half - 6), size: 8, align: TextAlign.right);
+    // ── guide: the nudge line only (an unlabelled 50% said nothing; your
+    // usual is the reference that matters)
+    final line = l.py(1.0);
     c.drawPath(
       _dash(
         Path()
@@ -662,27 +663,64 @@ class _ScorePainter extends CustomPainter {
       area
         ..lineTo(pts.last.dx, l.pressureBase)
         ..close();
-      // Coloured by height: calm stone low, deeper stone mid, amber tint on
-      // the approach (80–100%), full amber over the line. Read at a glance.
+      // One calm fill; amber only where you went over your line. Strain is
+      // the one thing this track has to say.
       c.save();
       c.clipPath(area);
-      final bands = <(double, double, Color)>[
-        (0.0, 0.5, Color.lerp(p.pastLight, p.bg, 0.30)!),
-        (0.5, 0.8, Color.lerp(p.pastModerate, p.bg, 0.35)!),
-        (0.8, 1.0, p.amberTint),
-        (1.0, 1.25, p.amber.withValues(alpha: 0.75)),
-      ];
-      for (final (lo, hi, col) in bands) {
-        c.drawRect(Rect.fromLTRB(_ScoreLayout.left, l.py(hi) - (hi >= 1.2 ? 40 : 0), l.right, l.py(lo)), Paint()..color = col);
+      if (p.line) {
+        // Line: a light comb under the curve; only over the line turns into
+        // an amber hatch. No fills.
+        final comb = Path();
+        for (var x = _ScoreLayout.left; x <= l.right; x += 5) {
+          comb
+            ..moveTo(x, l.pressureBase)
+            ..lineTo(x, l.py(1.3) - 40);
+        }
+        c.drawPath(
+          comb,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 0.8
+            ..color = (FlowPalette.lineColour ? p.lineData : p.text3).withValues(alpha: 0.38),
+        );
+        void hatch(double lo, double hi, double gap, double a) {
+          final top = l.py(hi) - (hi >= 1.2 ? 40 : 0), bottom = l.py(lo);
+          c.save();
+          c.clipRect(Rect.fromLTRB(_ScoreLayout.left, top, l.right, bottom));
+          final h = Path();
+          final span = bottom - top;
+          for (var x = _ScoreLayout.left - span; x <= l.right; x += gap) {
+            h
+              ..moveTo(x, bottom)
+              ..lineTo(x + span, top);
+          }
+          c.drawRect(Rect.fromLTRB(_ScoreLayout.left, top, l.right, bottom), Paint()..color = p.bg);
+          c.drawPath(
+            h,
+            Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 0.9
+              ..color = p.amber.withValues(alpha: a),
+          );
+          c.restore();
+        }
+
+        hatch(1.0, 1.25, 3.5, 0.95);
+        c.restore();
+      } else {
+        final bands = <(double, double, Color)>[(0.0, 1.0, Color.lerp(p.pastLight, p.bg, 0.30)!), (1.0, 1.25, p.amber.withValues(alpha: 0.75))];
+        for (final (lo, hi, col) in bands) {
+          c.drawRect(Rect.fromLTRB(_ScoreLayout.left, l.py(hi) - (hi >= 1.2 ? 40 : 0), l.right, l.py(lo)), Paint()..color = col);
+        }
+        c.restore();
       }
-      c.restore();
       c.drawPath(
         curve,
         Paint()
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.3
+          ..strokeWidth = p.line ? 1.4 * p.ink : 1.3
           ..strokeJoin = StrokeJoin.round
-          ..color = p.pastHeavy,
+          ..color = p.line ? p.text1 : p.pastHeavy,
       );
     }
 
@@ -808,6 +846,43 @@ class _ScorePainter extends CustomPainter {
       }
     }
 
+    // ── key for the dots, only the kinds this day has ──────────────────
+    final kinds = {for (final b in day.breaks) b.mark};
+    if (kinds.isNotEmpty) {
+      var kx = l.right;
+      for (final k in [BreakMark.snoozed, BreakMark.suggested, BreakMark.taken].where(kinds.contains)) {
+        final word = switch (k) {
+          BreakMark.taken => 'break taken',
+          BreakMark.suggested => 'skipped',
+          BreakMark.snoozed => 'snoozed',
+        };
+        final tp = TextPainter(
+          text: TextSpan(
+            text: word,
+            style: FlowType.chart(p, size: 8.5, color: p.text3),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        final x0 = kx - tp.width - 10;
+        tp.paint(c, Offset(kx - tp.width, l.dotsY - tp.height / 2));
+        final o = Offset(x0 + 2.5, l.dotsY);
+        final ring = Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1
+          ..color = p.text2;
+        switch (k) {
+          case BreakMark.taken:
+            c.drawCircle(o, 2.7, Paint()..color = p.selected);
+          case BreakMark.suggested:
+            c.drawCircle(o, 2.5, ring);
+          case BreakMark.snoozed:
+            c.drawCircle(o, 2.5, ring);
+            c.drawArc(Rect.fromCircle(center: o, radius: 2.5), -math.pi / 2, math.pi, true, Paint()..color = p.text2);
+        }
+        kx = x0 - 14;
+      }
+    }
+
     // ── axis + hour labels ─────────────────────────────────────────────
     c.drawLine(
       Offset(_ScoreLayout.left, l.blockBase),
@@ -858,7 +933,7 @@ class _ScorePainter extends CustomPainter {
     for (final (i, s) in day.sessions.indexed) {
       final x0 = l.x(s.start), x1 = l.x(s.end), h = l.blockH(s.demand);
       final ti = _tOf(i);
-      final stone = p.pastByDemand[s.demand.index];
+      final stone = p.pastModerate /* one stone: height already shows demand */;
       switch (s.state) {
         case TimelineSessionState.done:
           final since = isToday ? now.difference(s.end) : const Duration(days: 1);
@@ -948,7 +1023,17 @@ class _ScorePainter extends CustomPainter {
           if (h.usual != null) 'usual ${(h.usual! * 100).round()}%',
         ].join(' · '),
       ].where((s) => s.isNotEmpty).toList();
-      final cardW = 170.0, cardH = 12.0 + lines.length * 13;
+      // sized to its text, so a long task name or "usual 46%" never spills
+      double wOf(String t, double sz) => (TextPainter(
+        text: TextSpan(
+          text: t,
+          style: FlowType.chart(p, size: sz).copyWith(fontFamily: FlowFonts.mono),
+        ),
+        textDirection: TextDirection.ltr,
+        textScaler: textScale,
+      )..layout()).width;
+      final cardW = math.min(320.0, 16 + [for (var i = 0; i < lines.length; i++) wOf(lines[i], i == 0 ? 10 : 9)].fold(120.0, math.max));
+      final cardH = 12.0 + lines.length * 13;
       final cx = (x + 8 + cardW > l.right) ? x - 8 - cardW : x + 8;
       final cy = l.blockBase - l.maxBlock - 12;
       final r = RRect.fromLTRBR(cx, cy, cx + cardW, cy + cardH, const Radius.circular(6));

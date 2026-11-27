@@ -58,7 +58,7 @@ class PrivacyScreen extends ConsumerWidget {
                       const SizedBox(height: 12),
                       switch (summary) {
                         AsyncData(:final value) => _Stack(categories: value.categories, height: stackH),
-                        AsyncError(:final error) => Text(errorText(error)),
+                        AsyncError(:final error) => InlineError(message: errorText(error), onRetry: () => ref.invalidate(dataSummaryProvider)),
                         _ => SizedBox(
                           height: stackH,
                           child: const Center(child: LoadingBlocks(height: 160, count: 4)),

@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../theme/motion.dart';
 import '../theme/tokens.dart';
+import 'style_morph.dart';
 
 enum DialMode {
   /// Choosing a duration before a session.
@@ -186,7 +187,12 @@ class _DurationDialState extends State<DurationDial> with TickerProviderStateMix
   bool _inCenter(Offset local) => (local - Offset(widget.size / 2, widget.size / 2)).distance < widget.size * 0.28;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => MorphMark(
+    kind: MorphKind.dial,
+    child: RepaintBoundary(child: _morphBuild(context)),
+  );
+
+  Widget _morphBuild(BuildContext context) {
     final p = FlowPalette.of(context);
     final interactive = widget.mode == DialMode.pick && widget.onChanged != null;
     Widget dial = AnimatedBuilder(
@@ -404,17 +410,47 @@ class _DialPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final c = size.center(Offset.zero);
     final R = size.width * 0.36;
-    // face: a raised disc inside the ring
-    canvas.drawCircle(c.translate(0, 1.5), R - 6, Paint()..color = Faces.ground(p.raised).withValues(alpha: 0.35));
-    canvas.drawCircle(c, R - 6, Paint()..color = p.raised);
-    canvas.drawCircle(
-      c,
-      R - 6,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1
-        ..color = p.hairline,
-    );
+    if (p.line) {
+      // Line: no raised disc. One inked face ring, and a thin progress arc
+      // outside the ticks (the reading, as a gauge).
+      canvas.drawCircle(
+        c,
+        R - 6,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = p.ink
+          ..color = p.text1.withValues(alpha: drawIn.clamp(0.0, 1.0)),
+      );
+      final f = mode == DialMode.pick ? (value / DurationDial.fullTurn).clamp(0.0, 1.0) : fraction.clamp(0.0, 1.0);
+      if (f > 0) {
+        canvas.drawArc(
+          Rect.fromCircle(center: c, radius: R + 15),
+          -math.pi / 2,
+          f * 2 * math.pi * drawIn.clamp(0.0, 1.0),
+          false,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.4
+            ..strokeCap = StrokeCap.round
+            ..color = switch (mode) {
+              DialMode.drain => p.amber,
+              _ => p.accent,
+            },
+        );
+      }
+    } else {
+      // face: a raised disc inside the ring
+      canvas.drawCircle(c.translate(0, 1.5), R - 6, Paint()..color = Faces.ground(p.raised).withValues(alpha: 0.35));
+      canvas.drawCircle(c, R - 6, Paint()..color = p.raised);
+      canvas.drawCircle(
+        c,
+        R - 6,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1
+          ..color = p.hairline,
+      );
+    }
 
     // pick: the ring is a 3 h scale. progress/drain: the ring IS this session/break.
     final valueTick = mode == DialMode.pick ? value / DurationDial.step : ticks.toDouble();
@@ -546,7 +582,9 @@ class _DialPainter extends CustomPainter {
     // on the second turn the handle rides the outer ring, in its colour
     final out = mode == DialMode.pick ? lap : 0.0;
     final dot = c + Offset(math.cos(a), math.sin(a)) * (R - 14 + 36 * out);
-    final dotColor = mode == DialMode.drain ? p.amber : Color.lerp(p.accent, p.amber, out.clamp(0.0, 1.0))!;
+    final dotColor = mode == DialMode.drain
+        ? p.amber
+        : Color.lerp(p.line && mode == DialMode.pick ? p.text1 : p.accent, p.amber, out.clamp(0.0, 1.0))!;
     canvas.drawCircle(dot, active ? 5.2 : 4.4, Paint()..color = dotColor);
   }
 

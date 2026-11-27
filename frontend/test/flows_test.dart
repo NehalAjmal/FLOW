@@ -1,16 +1,20 @@
 import 'package:flow/api/api_connector.dart';
 import 'package:flow/api/api_error.dart';
+import 'package:flow/api/mock/mock_apis.dart';
 import 'package:flow/api/mock/mock_backend.dart';
 import 'package:flow/api/models/consent.dart';
 import 'package:flow/api/models/session.dart';
 import 'package:flow/api/models/settings.dart';
+import 'package:flow/core/session_clock.dart';
 import 'package:flow/state/account_controllers.dart';
 import 'package:flow/state/auth_controller.dart';
 import 'package:flow/state/break_controller.dart';
 import 'package:flow/state/data_providers.dart';
 import 'package:flow/state/session_controller.dart';
+import 'package:flow/widgets/common.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'helpers.dart';
 
@@ -179,6 +183,85 @@ void main() {
       expect(c.read(liveSessionProvider).value!.session.paused, isFalse);
     });
 
+    test('the clock stops while paused and carries on after resume', () async {
+      final c = await signedIn(MockBackend(config: MockConfig.fast), 'solo@flow.dev');
+      c.listen(liveSessionProvider, (_, _) {});
+      c.listen(pausedSinceProvider, (_, _) {});
+      await c.read(liveSessionProvider.future);
+      final ctl = c.read(liveSessionProvider.notifier);
+      await ctl.start(const StartSessionRequest(demand: Demand.light, plannedMinutes: 25));
+      expect(c.read(pausedSinceProvider), isNull);
+      await ctl.pause();
+      final mark = c.read(pausedSinceProvider);
+      final s = c.read(liveSessionProvider).value!.session;
+      expect(mark?.id, s.sessionId);
+      // ten minutes on, a paused clock still shows the moment of the pause
+      final later = mark!.at.add(const Duration(minutes: 10));
+      expect(s.focusAt(later, mark), s.focusAt(mark.at, mark));
+      expect(s.elapsedAt(later) - s.focusAt(later, mark), const Duration(minutes: 10));
+      await ctl.resume();
+      expect(c.read(pausedSinceProvider), isNull);
+      // after resume the server's paused_seconds takes over
+      final r = c.read(liveSessionProvider).value!.session;
+      expect(r.focusAt(later, null), r.elapsedAt(later));
+      // ending while paused keeps the mark, so the logged time excludes the pause
+      await ctl.pause();
+      expect(c.read(pausedSinceProvider)?.id, s.sessionId);
+      await ctl.end();
+      expect(c.read(pausedSinceProvider)?.id, s.sessionId);
+    });
+
+    test('a restart during a pause keeps the original pause moment', () async {
+      SharedPreferences.setMockInitialValues({});
+      final b = MockBackend(config: MockConfig.fast);
+      final c1 = await signedIn(b, 'solo@flow.dev');
+      c1.listen(liveSessionProvider, (_, _) {});
+      c1.listen(pausedSinceProvider, (_, _) {});
+      await c1.read(liveSessionProvider.future);
+      await c1.read(liveSessionProvider.notifier).start(const StartSessionRequest(demand: Demand.light, plannedMinutes: 25));
+      await c1.read(liveSessionProvider.notifier).pause();
+      final first = c1.read(pausedSinceProvider)!;
+      final sp = await SharedPreferences.getInstance();
+      await eventually(() => sp.getString(PausedSince.key) != null);
+      c1.dispose();
+      final c2 = await signedIn(b, 'solo@flow.dev');
+      c2.listen(liveSessionProvider, (_, _) {});
+      c2.listen(pausedSinceProvider, (_, _) {});
+      await c2.read(liveSessionProvider.future);
+      await eventually(() => c2.read(pausedSinceProvider)?.at == first.at);
+      await c2.read(liveSessionProvider.notifier).resume();
+      expect(c2.read(pausedSinceProvider), isNull);
+    });
+
+    test('a server without pause or +15 routes: a clear message, and the clock keeps running', () async {
+      final b = MockBackend(config: MockConfig.fast);
+      final c = mockContainer(b, session: _NoPauseRoutes(b));
+      c.listen(authProvider, (_, _) {});
+      await eventually(() => c.read(authProvider) is SignedOut);
+      await c.read(authProvider.notifier).login(email: 'solo@flow.dev', password: 'password');
+      c.listen(liveSessionProvider, (_, _) {});
+      c.listen(pausedSinceProvider, (_, _) {});
+      await c.read(liveSessionProvider.future);
+      final ctl = c.read(liveSessionProvider.notifier);
+      await ctl.start(const StartSessionRequest(demand: Demand.light, plannedMinutes: 25));
+      for (final call in [ctl.pause, () => ctl.extend(15)]) {
+        Object? error;
+        try {
+          await call();
+        } catch (e) {
+          error = e;
+        }
+        expect(error, isA<ApiError>());
+        expect(errorText(error!), "This server doesn't support that yet.");
+      }
+      final s = c.read(liveSessionProvider).value!.session;
+      expect(s.paused, isFalse);
+      expect(s.plannedMinutes, 25);
+      expect(c.read(pausedSinceProvider), isNull);
+      // a 404 for a real missing thing keeps the server's own words
+      expect(errorText(ApiError.fromResponse(404, '{"detail":"Task not found"}')), 'Task not found');
+    });
+
     test('a running session is restored after an app restart', () async {
       final b = MockBackend(config: MockConfig.fast);
       final c1 = await signedIn(b, 'solo@flow.dev');
@@ -229,4 +312,16 @@ void main() {
     expect(apiModeWarnings({...defaultApiModes, ApiArea.session: ApiMode.real}), isNotEmpty);
     expect(apiModeWarnings(defaultApiModes), isEmpty);
   });
+}
+
+/// The real backend today: no /pause, /resume or /extend routes.
+class _NoPauseRoutes extends MockSessionApi {
+  _NoPauseRoutes(super.b);
+  static ApiError get _missing => ApiError.fromResponse(404, '{"detail":"Not Found"}');
+  @override
+  Future<void> pause(String sessionId, {String? reason}) async => throw _missing;
+  @override
+  Future<void> resume(String sessionId) async => throw _missing;
+  @override
+  Future<ActiveSession> extend(String sessionId, int minutes) async => throw _missing;
 }

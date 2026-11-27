@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 
 import '../theme/tokens.dart';
+import 'style_morph.dart';
 
 /// A coloured ground that gives a screen its character. Colour = meaning:
 /// [FieldTone.planned] ultramarine (not yet / about to start),
@@ -34,8 +35,29 @@ class ColorField extends StatelessWidget {
   };
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => MorphMark(kind: MorphKind.panel, radius: radius, child: _morphBuild(context));
+
+  Widget _morphBuild(BuildContext context) {
     final p = FlowPalette.of(context);
+    if (p.line) {
+      // Line: no wash. A hairline outline on the ground; meaning tones keep
+      // their colour on the edge only (now = verdigris, rest = amber).
+      final edge = switch (tone) {
+        FieldTone.now => p.accent,
+        FieldTone.rest => p.amber,
+        FieldTone.past when FlowPalette.lineColour => p.lineData,
+        _ => p.text1,
+      };
+      return Container(
+        padding: padding,
+        decoration: BoxDecoration(
+          color: FlowPalette.lineColour && edge != p.text1 ? edge.withValues(alpha: 0.05) : null,
+          borderRadius: BorderRadius.circular(radius + 2),
+          border: Border.all(color: edge, width: p.ink),
+        ),
+        child: child,
+      );
+    }
     return Container(
       padding: padding,
       decoration: BoxDecoration(

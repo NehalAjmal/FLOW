@@ -10,13 +10,13 @@ export 'palette.dart';
 ///  * [notYet] OffBit Dot: same skeleton as 101, used for things that have not
 ///    happened yet (scheduled times, countdown before a start). Rule L in type.
 ///  * [ui] Sono: controls, labels, read-outs. [mono] for small tabular numbers.
-///  * [note] Cutive: Flow speaking to you (nudges, insights, guide, summary).
+///  * Flow speaking to you (nudges, insights, guide, summary) is Sono via
+///    [FlowType.note], set a little looser. Cutive was retired 2026-11-27.
 abstract final class FlowFonts {
   static const instrument = 'OffBit';
   static const notYet = 'OffBitDot';
   static const ui = 'Sono';
   static const mono = 'SonoMono';
-  static const note = 'Cutive';
   static const double instrumentMin = 20;
 }
 
@@ -50,7 +50,18 @@ abstract final class FlowType {
   /// Big numerals (timers, margin numbers). OffBit at [FlowFonts.instrumentMin]
   /// and above, SonoMono below. OffBit digits are proportional: for values that
   /// tick, render through [TabularNumeral] so the row does not jiggle.
-  static TextStyle numeral(FlowPalette p, double size, {bool notYet = false, Color? color}) => size >= FlowFonts.instrumentMin
+  static TextStyle numeral(FlowPalette p, double size, {bool notYet = false, Color? color}) => p.line
+      // Line style: one family. Sono Mono, light, tabular, a touch tight.
+      ? TextStyle(
+          fontFamily: FlowFonts.mono,
+          fontSize: size,
+          fontWeight: size >= FlowFonts.instrumentMin ? FontWeight.w300 : FontWeight.w400,
+          height: 1.0,
+          letterSpacing: size >= FlowFonts.instrumentMin ? -0.03 * size : 0,
+          color: (color ?? p.text1).withValues(alpha: notYet ? 0.55 : 1),
+          fontFeatures: tabular,
+        )
+      : size >= FlowFonts.instrumentMin
       ? TextStyle(
           fontFamily: notYet ? FlowFonts.notYet : FlowFonts.instrument,
           fontSize: size,
@@ -69,13 +80,22 @@ abstract final class FlowType {
         );
 
   /// Headline in the instrument voice (screen titles, card heads).
-  static TextStyle headline(FlowPalette p, {double size = 24, bool bold = true, Color? color}) => TextStyle(
-    fontFamily: FlowFonts.instrument,
-    fontSize: size < FlowFonts.instrumentMin ? FlowFonts.instrumentMin : size,
-    fontWeight: bold ? FontWeight.w700 : FontWeight.w400,
-    height: 1.05,
-    color: color ?? p.text1,
-  );
+  static TextStyle headline(FlowPalette p, {double size = 24, bool bold = true, Color? color}) => p.line
+      ? TextStyle(
+          fontFamily: FlowFonts.ui,
+          fontSize: size + 2,
+          fontWeight: FontWeight.w400,
+          height: 1.1,
+          letterSpacing: -0.015 * size,
+          color: color ?? p.text1,
+        )
+      : TextStyle(
+          fontFamily: FlowFonts.instrument,
+          fontSize: size < FlowFonts.instrumentMin ? FlowFonts.instrumentMin : size,
+          fontWeight: bold ? FontWeight.w700 : FontWeight.w400,
+          height: 1.05,
+          color: color ?? p.text1,
+        );
 
   /// Letter-spaced small caps for read-outs and section labels.
   static TextStyle label(FlowPalette p, {double size = 10.5, Color? color}) => TextStyle(
@@ -91,9 +111,9 @@ abstract final class FlowType {
   static TextStyle chart(FlowPalette p, {double size = 9.5, Color? color, FontWeight weight = FontWeight.w400}) =>
       TextStyle(fontFamily: FlowFonts.mono, fontSize: size, fontWeight: weight, color: color ?? p.text3, fontFeatures: tabular);
 
-  /// Flow's own voice. Cutive's lowercase runs large, so it sits 1 px under UI size.
+  /// Flow's own voice: Sono, set a little looser than the UI.
   static TextStyle note(FlowPalette p, {double size = 14, Color? color}) =>
-      TextStyle(fontFamily: FlowFonts.note, fontSize: size - 1, height: 1.5, color: color ?? p.text2);
+      TextStyle(fontFamily: FlowFonts.ui, fontSize: size - 0.5, height: 1.55, color: color ?? p.text2);
 }
 
 /// A length of time in words, one format everywhere: "25 min", "1 h 05 min",
@@ -181,8 +201,8 @@ class TabularNumeral extends StatelessWidget {
   }
 }
 
-ThemeData buildTheme(Brightness brightness) {
-  final p = brightness == Brightness.dark ? FlowPalette.dark : FlowPalette.light;
+ThemeData buildTheme(Brightness brightness, {bool line = false}) {
+  final p = FlowPalette.pick(brightness, line: line);
   final scheme = ColorScheme(
     brightness: brightness,
     primary: p.selected,
@@ -207,7 +227,7 @@ ThemeData buildTheme(Brightness brightness) {
   // Sono everywhere by default; the instrument voice takes display/headline/titleLarge.
   final base = ThemeData(useMaterial3: true, colorScheme: scheme, brightness: brightness, fontFamily: FlowFonts.ui);
   TextStyle? inst(TextStyle? t, {FontWeight w = FontWeight.w400}) =>
-      t?.copyWith(fontFamily: FlowFonts.instrument, fontWeight: w, letterSpacing: 0, height: 1.05);
+      t?.copyWith(fontFamily: line ? FlowFonts.ui : FlowFonts.instrument, fontWeight: w, letterSpacing: 0, height: 1.05);
   final text = base.textTheme
       .apply(bodyColor: p.text1, displayColor: p.text1)
       .copyWith(

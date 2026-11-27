@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../tutorial/coach.dart';
 import '../api/api_connector.dart';
 import '../api/api_error.dart';
 import '../api/models/intervention.dart';
@@ -25,6 +26,7 @@ import '../widgets/common.dart';
 import 'auth_layout.dart' show BlocksStage, StageState;
 import 'shell.dart' show FlowHeader;
 import 'home_screen.dart' show demandLabel;
+import '../core/session_clock.dart';
 
 // ── /session/start ─────────────────────────────────────────────────────────
 
@@ -89,7 +91,7 @@ class _ActiveSessionScreenState extends ConsumerState<ActiveSessionScreen> {
           );
         }
         final s = l.session;
-        final elapsed = s.elapsedAt(now);
+        final elapsed = s.focusAt(now, ref.watch(pausedSinceProvider));
         final planned = Duration(minutes: s.plannedMinutes);
         final remaining = planned - elapsed;
         final fraction = (elapsed.inSeconds / planned.inSeconds).clamp(0.0, 1.0);
@@ -474,7 +476,10 @@ class _LiveSignals extends ConsumerWidget {
 }
 
 Future<void> _showStuck(BuildContext context, WidgetRef ref, String sessionId) async {
-  final future = ref.read(sessionApiProvider).stuck(sessionId);
+  // Future.sync: a client that throws before going async still lands in the dialog's error state
+  final future = Future.sync(() => ref.read(sessionApiProvider).stuck(sessionId));
+  // handled by the dialog's FutureBuilder, which only subscribes a frame later
+  future.ignore();
   await showDialog<void>(
     context: context,
     builder: (c) => AlertDialog(
@@ -662,9 +667,12 @@ class _BreakScreenState extends ConsumerState<BreakScreen> {
         // Lock mode always offers a visible emergency override (doc §6.1).
         SlideToOverride(onConfirmed: () => _override(interventionId)),
       ] else
-        SizedBox(
-          width: 240,
-          child: _Primary(label: left.isNegative ? "I'm back" : 'End break early', onPressed: _finish),
+        CoachMark(
+          'end-break',
+          child: SizedBox(
+            width: 240,
+            child: _Primary(label: left.isNegative ? "I'm back" : 'End break early', onPressed: _finish),
+          ),
         ),
     ]);
   }
@@ -797,7 +805,7 @@ class SessionEndScreen extends ConsumerStatefulWidget {
 
 /// Session summary (spec §7): display = the session's blocks rising from its
 /// own axis, with breaks as gaps and nudges marked; read-out; what Flow
-/// learned (Cutive); deck = 5-dot rating · Done.
+/// learned (Flow's voice); deck = 5-dot rating · Done.
 class _SessionEndScreenState extends ConsumerState<SessionEndScreen> {
   int? _rating;
 
@@ -1039,7 +1047,7 @@ class _AxisPainter extends CustomPainter {
           Demand.moderate => 0.78,
           Demand.heavy => 1.0,
         };
-    final stone = p.pastByDemand[demand.index];
+    final stone = p.pastModerate /* one stone: height already shows demand */;
     final depth = (h * 0.12).clamp(5.0, 12.0);
 
     // axis + minute ticks every 10
@@ -1080,7 +1088,7 @@ class _AxisPainter extends CustomPainter {
       final x0 = x(seg.$1) + 1.5, x1 = x(seg.$2) - 1.5;
       final top = base - h * r;
       if (r > 0.004) paintSolidBlock(c, x0, x1, base, h * r, depth, stone);
-      if (r < 0.999) continue;
+      if (r < 0.999 || LineInk.on) continue;
       // 10-minute seams so a long block keeps the rhythm of the axis
       for (var m = ((seg.$1 ~/ 10) + 1) * 10; m < seg.$2; m += 10) {
         c.drawLine(

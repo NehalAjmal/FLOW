@@ -1,5 +1,6 @@
 import 'package:flow/api/api_connector.dart';
 import 'package:flow/api/mock/mock_apis.dart';
+import 'package:flow/api/contracts/session_api.dart';
 import 'package:flow/api/mock/mock_backend.dart';
 import 'package:flow/core/token_store.dart';
 import 'package:flow/state/session_controller.dart';
@@ -7,7 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
 
 /// Overrides every API provider with its mock, regardless of FLOW_DEV.
-List<Override> mockOverrides(MockBackend b) => [
+List<Override> mockOverrides(MockBackend b, {SessionApi? session}) => [
   tokenStoreProvider.overrideWithValue(MemoryTokenStore()),
   mockBackendProvider.overrideWith((ref) {
     b.onSessionExpired = () => ref.read(sessionExpiredProvider).add(null);
@@ -18,7 +19,7 @@ List<Override> mockOverrides(MockBackend b) => [
   consentApiProvider.overrideWithValue(MockConsentApi(b)),
   settingsApiProvider.overrideWithValue(MockSettingsApi(b)),
   pauseApiProvider.overrideWithValue(MockPauseApi(b)),
-  sessionApiProvider.overrideWithValue(MockSessionApi(b)),
+  sessionApiProvider.overrideWithValue(session ?? MockSessionApi(b)),
   interventionApiProvider.overrideWithValue(MockInterventionApi(b)),
   breakApiProvider.overrideWithValue(MockBreakApi(b)),
   insightsApiProvider.overrideWithValue(MockInsightsApi(b)),
@@ -36,8 +37,8 @@ List<Override> mockOverrides(MockBackend b) => [
   sessionTimingProvider.overrideWithValue(const SessionTiming(pollEvery: Duration(milliseconds: 15), retryStreamAfterPolls: 1000)),
 ];
 
-ProviderContainer mockContainer(MockBackend b) {
-  final c = ProviderContainer.test(overrides: mockOverrides(b), retry: (_, _) => null);
+ProviderContainer mockContainer(MockBackend b, {SessionApi? session}) {
+  final c = ProviderContainer.test(overrides: mockOverrides(b, session: session), retry: (_, _) => null);
   // The mock backend's expiry hook is installed when its provider is built.
   c.read(mockBackendProvider);
   return c;

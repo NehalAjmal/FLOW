@@ -21,6 +21,8 @@ import '../state/data_providers.dart';
 import '../desktop/desktop_host.dart';
 import '../desktop/window_controller.dart';
 import '../theme/motion.dart';
+import '../theme/style.dart';
+import '../ui/blocks.dart';
 import '../theme/tokens.dart';
 import '../ui/appear.dart';
 import '../ui/dial.dart';
@@ -30,6 +32,7 @@ import '../ui/kit.dart';
 import '../ui/loading_blocks.dart';
 import '../ui/nudge_style.dart';
 import '../ui/range_slider.dart';
+import '../tutorial/tour.dart';
 import '../widgets/common.dart';
 import 'auth_layout.dart' show AuthError, StageState;
 import 'auth_screens.dart' show CodeBoxes;
@@ -1114,10 +1117,10 @@ class _AccountSectionState extends ConsumerState<_AccountSection> {
 
 // ── 7 help ──────────────────────────────────────────────────────────────────
 
-class _HelpSection extends StatelessWidget {
+class _HelpSection extends ConsumerWidget {
   const _HelpSection();
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final p = FlowPalette.of(context);
     Widget key(String k, String what) => Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -1146,7 +1149,20 @@ class _HelpSection extends StatelessWidget {
       controls: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Pressable(onPressed: () => context.go(Routes.guide), child: const Text('Replay the welcome guide')),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              Pressable(onPressed: () => context.go(Routes.guide), child: const Text('Replay the welcome guide')),
+              Pressable(
+                onPressed: () {
+                  ref.read(tourProvider.notifier).replay();
+                  context.go(Routes.home);
+                },
+                child: const Text('Take the tour of Home'),
+              ),
+            ],
+          ),
           const SizedBox(height: 14),
           Text(
             'Questions or a bug? Use Feedback in the sidebar; it can include diagnostics if you choose.',
@@ -1161,7 +1177,9 @@ class _HelpSection extends StatelessWidget {
           const SizedBox(height: 8),
           key('Ctrl 1', 'Home'),
           key('Ctrl 2', 'Insights'),
+          key('Ctrl 3', 'Tasks'),
           key('Ctrl ,', 'Settings'),
+          key('Ctrl Shift L', 'Switch between Solid and Line'),
           key('Space', 'Pause / resume on the focus screen dial'),
         ],
       ),
@@ -1200,10 +1218,49 @@ class _AppearanceSection extends ConsumerWidget {
     return _Frame(
       tone: FieldTone.past,
       title: 'Appearance',
-      note: 'Light or dark, on this computer.',
+      note: 'Solid or Line, light or dark, on this computer.',
       controls: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          const SectionLabel('Style'),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              for (final (i, st) in FlowStyle.values.indexed) ...[
+                if (i > 0) const SizedBox(width: 8),
+                Expanded(
+                  child: Pressable(
+                    selected: prefs.style == st,
+                    semanticLabel: '${st.label} style',
+                    onPressed: () => set(prefs.copyWith(style: st)),
+                    padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SizedBox(
+                            height: 34,
+                            width: double.infinity,
+                            child: CustomPaint(painter: _StyleSwatch(st, prefs.style == st ? p.onSelected : p.text1)),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(st.label, style: const TextStyle(fontWeight: FontWeight.w600)),
+                          Text(
+                            st == FlowStyle.solid ? 'Pressed, filled shapes.' : 'Hairlines on sage. No solids.',
+                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w400, color: prefs.style == st ? p.onSelected : p.text2),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 16),
+          const SectionLabel('Light or dark'),
+          const SizedBox(height: 8),
           for (final (a, title, blurb) in options)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
@@ -1282,6 +1339,39 @@ class _AppearanceSection extends ConsumerWidget {
       ),
     );
   }
+}
+
+/// Three sessions, drawn the way each style draws them.
+class _StyleSwatch extends CustomPainter {
+  _StyleSwatch(this.style, this.ink);
+  final FlowStyle style;
+  final Color ink;
+
+  @override
+  void paint(Canvas c, Size s) {
+    final base = s.height - 1;
+    const hs = [0.55, 0.9, 0.7];
+    final w = s.width / 5.2;
+    final line = Paint()
+      ..color = ink
+      ..strokeWidth = 1;
+    c.drawLine(Offset(0, base), Offset(s.width, base), line);
+    for (var i = 0; i < 3; i++) {
+      final x0 = 4 + i * w * 1.45, x1 = x0 + w, h = (s.height - 6) * hs[i];
+      if (style == FlowStyle.solid) {
+        paintSolidBlock(c, x0, x1, base, h, 5, ink.withValues(alpha: 0.35 + i * 0.2));
+      } else {
+        for (var x = x0; x <= x1; x += 3) {
+          c.drawLine(Offset(x, base), Offset(x, base - h), line);
+        }
+        c.drawLine(Offset(x0 - 1, base - h), Offset(x1 + 1, base - h), line..strokeWidth = 1.4);
+        line.strokeWidth = 1;
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_StyleSwatch o) => o.style != style || o.ink != ink;
 }
 
 /// 24 hours as one strip: light hours as paper, dark hours as ink, a tick for

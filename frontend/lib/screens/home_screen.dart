@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../tutorial/coach.dart';
 import '../api/models/agent.dart';
 import '../api/models/consent.dart';
 import '../api/models/day.dart';
@@ -15,6 +16,8 @@ import '../state/account_controllers.dart';
 import '../state/auth_controller.dart';
 import '../state/data_providers.dart';
 import '../state/session_controller.dart';
+import '../tasks/tasks.dart';
+import '../theme/motion.dart';
 import '../theme/tokens.dart';
 import '../ui/dial.dart';
 import '../ui/drum_wheel.dart';
@@ -25,6 +28,7 @@ import '../ui/loading_blocks.dart';
 import '../ui/score/day_score.dart';
 import '../widgets/common.dart' show errorText, runGuarded, showError;
 import 'shell.dart' show FlowHeader;
+import '../core/session_clock.dart';
 
 String demandLabel(Demand d) => switch (d) {
   Demand.light => 'Light',
@@ -34,6 +38,29 @@ String demandLabel(Demand d) => switch (d) {
 
 const _weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/// The day in one line: the longest unbroken stretch of focus (sessions less
+/// than 10 min apart join), or the block running now. Null when there is
+/// nothing to say yet.
+String? dayHeadline(DayTimeline? d, {required bool today, required String weekday}) {
+  if (d == null) return null;
+  if (today && d.active != null) return 'In a focus block until ${_hm(d.active!.end)}';
+  final done = d.sessions.where((s) => s.state == TimelineSessionState.done).toList()..sort((a, b) => a.start.compareTo(b.start));
+  // join sessions less than 10 min apart into stretches; keep the longest
+  final spans = <(DateTime, DateTime)>[];
+  for (final s in done) {
+    if (spans.isNotEmpty && s.start.difference(spans.last.$2).inMinutes <= 10) {
+      final (a, b) = spans.removeLast();
+      spans.add((a, s.end.isAfter(b) ? s.end : b));
+    } else {
+      spans.add((s.start, s.end));
+    }
+  }
+  final best = spans.isEmpty ? null : spans.reduce((x, y) => y.$2.difference(y.$1) > x.$2.difference(x.$1) ? y : x);
+  final when = today ? 'today' : 'on $weekday';
+  if (best == null || best.$2.difference(best.$1).inMinutes < 20) return today ? null : 'No long stretch $when';
+  return 'Best stretch $when: ${_hm(best.$1)} to ${_hm(best.$2)}';
+}
 
 String _hm(DateTime t) => '${(t.hour - 1) % 12 + 1}:${t.minute.toString().padLeft(2, '0')}';
 DateTime _day(DateTime t) => DateTime(t.year, t.month, t.day);
@@ -56,6 +83,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   bool _busy = false;
   bool _explain = false; // "How to read this" layer
   final _task = TextEditingController();
+  String? _taskId; // the task picked from "Next up", if any
 
   @override
   void initState() {
@@ -93,9 +121,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ),
     );
     if (!mounted) return;
+    // log this session against the picked task, unless its text was changed
+    if (ok) {
+      final picked = ref.read(tasksProvider).value?.where((t) => t.id == _taskId).firstOrNull;
+      ref.read(activeTaskIdProvider.notifier).set(picked != null && picked.title == _task.text.trim() ? picked.id : null);
+    }
     setState(() {
       _busy = false;
       if (ok) {
+        _taskId = null;
         _selected = _day(DateTime.now());
         _task.clear();
       }
@@ -133,19 +167,27 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final hour = _now.hour;
     final greet = hour < 12 ? 'Good morning' : (hour < 18 ? 'Good afternoon' : 'Good evening');
     final first = user?.name.trim().split(' ').first ?? '';
+    final headline = dayHeadline(day.value, today: _isToday, weekday: _weekdays[_selected.weekday - 1]);
 
     return LayoutBuilder(
       builder: (context, viewport) {
         // Rule B: never look empty. The Score takes the room the window has.
         // up to 640: on a tall window the Score grows instead of leaving an
         // empty band under the deck
-        final scoreH = (viewport.maxHeight - 96 - 52 - 300).clamp(320.0, 640.0);
+        // The pressure track is kept short (about 40% less than it was): it
+        // explains the least, so the deck sits higher on the page.
+        final scoreH = ((viewport.maxHeight - 96 - 52 - 300) * 0.78).clamp(300.0, 480.0);
         return ListView(
           padding: const EdgeInsets.only(bottom: 24),
           children: [
             FlowHeader(
-              title: first.isEmpty ? greet : '$greet, $first',
-              subtitle: '${_weekdays[_now.weekday - 1].substring(0, 3)} ${_now.day} ${_months[_now.month - 1]}',
+              // the day's one-line conclusion; the greeting only while there
+              // is nothing to conclude yet
+              title: headline ?? (first.isEmpty ? greet : '$greet, $first'),
+              subtitle: [
+                if (headline != null && first.isNotEmpty) '$greet, $first',
+                '${_weekdays[_now.weekday - 1].substring(0, 3)} ${_now.day} ${_months[_now.month - 1]}',
+              ].join(' · '),
               action: _ExplainToggle(on: _explain, onChanged: (v) => setState(() => _explain = v)),
             ),
             const _AgentBanner(),
@@ -158,7 +200,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   'Your day, as blocks',
                   'Each session rises from the hour line. Taller = more demanding. Fresh ones start green and dry to stone.',
                 ),
-                (2, 'Pressure', 'How close you are to needing a break. It turns amber as it nears the dashed nudge line.'),
+                (
+                  2,
+                  'Pressure',
+                  'How close you are to needing a break. It turns amber only above the dashed nudge line. The dots under it are your breaks.',
+                ),
                 (3, 'Now', 'The green line. Dashed blocks to its right are planned, not yet happened.'),
               ],
             ),
@@ -202,27 +248,38 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   final lookBack = ColorField(
                     tone: FieldTone.past,
                     padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
-                    child: _LookBack(selected: _selected, today: _day(_now), onSelect: (d) => setState(() => _selected = _day(d))),
+                    child: CoachMark(
+                      'lookback',
+                      child: _LookBack(selected: _selected, today: _day(_now), onSelect: (d) => setState(() => _selected = _day(d))),
+                    ),
                   );
                   // about to start = planned (ultramarine); running = now (green)
-                  final start = ColorField(
-                    tone: live == null ? FieldTone.planned : FieldTone.now,
-                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
-                    child: live == null
-                        ? _StartGroup(
-                            minutes: minutes,
-                            suggestion: suggested,
-                            demand: _demand,
-                            task: _task,
-                            shareAi: _shareAi,
-                            busy: _busy,
-                            now: _now,
-                            onMinutes: (m) => setState(() => _minutes = m),
-                            onDemand: (d) => setState(() => _demand = d),
-                            onShareAi: (v) => setState(() => _shareAi = v),
-                            onStart: () => _start(minutes),
-                          )
-                        : _SessionGroup(live: live, onEnd: _end),
+                  final start = CoachMark(
+                    'deck',
+                    child: ColorField(
+                      tone: live == null ? FieldTone.planned : FieldTone.now,
+                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+                      child: live == null
+                          ? _StartGroup(
+                              minutes: minutes,
+                              suggestion: suggested,
+                              demand: _demand,
+                              task: _task,
+                              shareAi: _shareAi,
+                              busy: _busy,
+                              now: _now,
+                              onMinutes: (m) => setState(() => _minutes = m),
+                              onDemand: (d) => setState(() => _demand = d),
+                              onShareAi: (v) => setState(() => _shareAi = v),
+                              onStart: () => _start(minutes),
+                              onPickTask: (t, m) => setState(() {
+                                _taskId = t.id;
+                                _task.text = t.title;
+                                _minutes = m;
+                              }),
+                            )
+                          : _SessionGroup(live: live, onEnd: _end),
+                    ),
                   );
                   // below ~1100 px the two groups stack; the order stays display → read-out → deck
                   if (box.maxWidth < 860) {
@@ -371,7 +428,10 @@ class _Display extends StatelessWidget {
                   child: margin(
                     DurationNumeral(t.focusMinutes, size: 28),
                     'focused',
-                    delta == null ? null : '${delta >= 0 ? '+' : '−'}${flowDuration(delta.abs())} vs usual',
+                    delta == null
+                        ? null
+                        : // two lines: the margin is 112 px and "vs usual" was cut to "vs u"
+                          '${delta >= 0 ? '+' : '−'}${flowDuration(delta.abs())}\nvs your usual',
                   ),
                 ),
                 Positioned(
@@ -388,15 +448,18 @@ class _Display extends StatelessWidget {
           Expanded(
             child: Padding(
               padding: const EdgeInsets.only(right: 24),
-              child: DayScore(
-                day: day,
-                now: now,
-                ghostMinutes: ghost,
-                height: h,
-                onGhostDrag: ghost > 0 ? onGhost : null,
-                onSessionTap: onSession,
-                // drag across the future to plan a session on this weekday
-                onScheduleDraft: (a, b) => _scheduleFromDraft(context, a, b),
+              child: CoachMark(
+                'day',
+                child: DayScore(
+                  day: day,
+                  now: now,
+                  ghostMinutes: ghost,
+                  height: h,
+                  onGhostDrag: ghost > 0 ? onGhost : null,
+                  onSessionTap: onSession,
+                  // drag across the future to plan a session on this weekday
+                  onScheduleDraft: (a, b) => _scheduleFromDraft(context, a, b),
+                ),
               ),
             ),
           ),
@@ -427,14 +490,34 @@ class _LookBack extends ConsumerWidget {
         Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            DrumWheel(
-              value: offset,
-              min: -27,
-              max: 0,
-              length: 200,
-              onChanged: (d) => onSelect(today.add(Duration(days: d))),
-              semanticLabel: 'Day',
-              semanticValue: (d) => d == 0 ? 'today' : '${-d} days ago',
+            // the wheel picks the day; its caption says which, so what it
+            // does is never a guess
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DrumWheel(
+                  value: offset,
+                  min: -27,
+                  max: 0,
+                  length: 184,
+                  onChanged: (d) => onSelect(today.add(Duration(days: d))),
+                  semanticLabel: 'Day',
+                  semanticValue: (d) => d == 0 ? 'today' : '${-d} days ago',
+                ),
+                const SizedBox(height: 6),
+                SizedBox(
+                  width: 44,
+                  child: AnimatedSwitcher(
+                    duration: Motion.reduced(context) ? Duration.zero : Motion.fade,
+                    child: Text(
+                      offset == 0 ? 'today' : '${-offset}d ago',
+                      key: ValueKey(offset),
+                      textAlign: TextAlign.center,
+                      style: FlowType.chart(p, size: 9, color: p.text2),
+                    ),
+                  ),
+                ),
+              ],
             ),
             const SizedBox(width: 6),
             Expanded(
@@ -474,8 +557,10 @@ class _StartGroup extends ConsumerWidget {
     required this.onDemand,
     required this.onShareAi,
     required this.onStart,
+    required this.onPickTask,
   });
 
+  final void Function(FlowTask task, int minutes) onPickTask;
   final int minutes;
   final int? suggestion;
   final Demand demand;
@@ -507,14 +592,17 @@ class _StartGroup extends ConsumerWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Pressable(
-                  tone: PressableTone.primary,
-                  onPressed: busy ? null : onStart,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                  // shrinks a little before it would ever clip
-                  child: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text(busy ? 'Starting…' : 'Start · ends ${_hm(ends)}', maxLines: 1, softWrap: false),
+                CoachMark(
+                  'start',
+                  child: Pressable(
+                    tone: PressableTone.primary,
+                    onPressed: busy ? null : onStart,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    // shrinks a little before it would ever clip
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(busy ? 'Starting…' : 'Start · ends ${_hm(ends)}', maxLines: 1, softWrap: false),
+                    ),
                   ),
                 ),
                 if (suggestion != null) ...[
@@ -566,8 +654,9 @@ class _StartGroup extends ConsumerWidget {
                               ),
                           ],
                         ),
+                        _NextUp(onPick: onPickTask, current: task),
                         const SizedBox(height: 12),
-                        FlowTextField(controller: task, hint: 'What are you working on? (optional)'),
+                        FlowTextField(controller: task, hint: 'What are you working on?'),
                         const SizedBox(height: 14),
                         SnapSlider(
                           steps: 3,
@@ -596,7 +685,10 @@ class _StartGroup extends ConsumerWidget {
                   ),
                 ),
                 SizedBox(width: tight ? 24 : 32),
-                DurationDial(minutes: minutes, suggestion: suggestion, size: 204, onChanged: onMinutes, onCenterTap: busy ? null : onStart),
+                CoachMark(
+                  'dial',
+                  child: DurationDial(minutes: minutes, suggestion: suggestion, size: 204, onChanged: onMinutes, onCenterTap: busy ? null : onStart),
+                ),
                 if (!tight) ...[const SizedBox(width: 28), Flexible(flex: 3, child: start)],
                 const Spacer(),
               ],
@@ -604,6 +696,48 @@ class _StartGroup extends ConsumerWidget {
           },
         ),
       ],
+    );
+  }
+}
+
+/// Up to three open tasks; picking one fills the task and the dial (sized
+/// by your own pace). Hidden when there are no tasks.
+class _NextUp extends ConsumerWidget {
+  const _NextUp({required this.onPick, required this.current});
+  final void Function(FlowTask task, int minutes) onPick;
+  final TextEditingController current;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final p = FlowPalette.of(context);
+    final all = ref.watch(tasksProvider).value ?? const <FlowTask>[];
+    final open = all.where((t) => !t.done).take(3).toList();
+    if (open.isEmpty) return const SizedBox(height: 0);
+    final cal = Calibration.of(all);
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: ListenableBuilder(
+        listenable: current,
+        builder: (context, _) => Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Text(flowCaps('next up'), style: FlowType.label(p, size: 9, color: p.text3)),
+            for (final t in open)
+              Pressable(
+                selected: current.text.trim() == t.title,
+                semanticLabel: 'Work on ${t.title}',
+                onPressed: () => onPick(t, suggestedFor(t.estimateMinutes, cal)),
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 150),
+                  child: Text(t.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12)),
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -620,11 +754,12 @@ class _SessionGroup extends ConsumerWidget {
     final p = FlowPalette.of(context);
     final now = ref.watch(clockProvider).value ?? DateTime.now();
     final s = live.session;
-    final elapsed = s.elapsedAt(now);
+    final elapsed = s.focusAt(now, ref.watch(pausedSinceProvider));
     final total = Duration(minutes: s.plannedMinutes);
     final left = total - elapsed;
     final frac = (elapsed.inSeconds / total.inSeconds).clamp(0.0, 1.0);
-    final ends = s.startedAt.add(total + Duration(seconds: s.pausedSeconds));
+    // while paused the end slides with the clock
+    final ends = now.add(left);
     String mmss(Duration d) => '${d.inMinutes.abs()}:${(d.inSeconds.abs() % 60).toString().padLeft(2, '0')}';
     final notifier = ref.read(liveSessionProvider.notifier);
 

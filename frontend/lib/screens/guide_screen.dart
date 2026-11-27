@@ -9,6 +9,7 @@ import '../api/models/agent.dart';
 import '../api/models/consent.dart';
 import '../api/models/session.dart';
 import '../desktop/window_controller.dart';
+import '../tutorial/tour.dart';
 import '../router/routes.dart';
 import '../state/account_controllers.dart';
 import '../state/auth_controller.dart';
@@ -16,6 +17,7 @@ import '../state/data_providers.dart';
 import '../state/session_controller.dart';
 import '../theme/motion.dart';
 import '../theme/tokens.dart';
+import '../ui/blocks.dart' show LineInk, paintLineBlock;
 import '../ui/brand/wordmark.dart';
 import '../ui/dial.dart';
 import '../ui/feature_note.dart';
@@ -115,6 +117,8 @@ class _GuideScreenState extends ConsumerState<GuideScreen> {
 
   void _finish() {
     if (!_consentOk) return _go(1);
+    // first run (not a replay from Settings): Home opens with the tour
+    if (GoRouterState.of(context).matchedLocation == Routes.consent) ref.read(tourProvider.notifier).queueIfNew();
     context.go(Routes.home);
   }
 
@@ -543,7 +547,7 @@ class _DayPainter extends CustomPainter {
     }
 
     // sessions: solid as far as time has got, dashed for the rest of the plan
-    final tones = [p.pastModerate, p.pastHeavy, p.pastLight];
+    final tones = [p.pastModerate, p.pastModerate, p.pastModerate]; // one stone: height already shows demand
     const depth = 9.0;
     for (final (i, (a, b, hf)) in _sessions.indexed) {
       final x0 = x(a), x1 = x(b), h = room * hf;
@@ -564,6 +568,10 @@ class _DayPainter extends CustomPainter {
       if (now > a) {
         final xe = math.min(x(now), x1);
         final face = tones[i];
+        if (LineInk.on) {
+          paintLineBlock(c, x0, xe, floor, h, depth, face);
+          continue;
+        }
         c.drawRect(Rect.fromLTRB(x0, floor - h, xe, floor), Paint()..color = face);
         c.drawPath(
           Path()
@@ -866,7 +874,7 @@ class _MeterPainter extends CustomPainter {
             topLeft: const Radius.circular(2),
             topRight: const Radius.circular(2),
           ),
-          Paint()..color = f > 0.75 ? p.pastHeavy : (f > 0.5 ? p.pastModerate : p.pastLight),
+          Paint()..color = p.pastModerate, // one stone: height already shows how much
         );
       }
     }

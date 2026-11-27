@@ -31,7 +31,15 @@ void main() {
     await tester.tap(find.widgetWithText(Pressable, 'Sign in'));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining(', Sam'), findsOneWidget);
+    // The title depends on the mock day at the wall-clock time: the greeting
+    // ("Good afternoon, Sam") until there is a stretch to report, then
+    // "Best stretch today …" with the greeting in the all-caps subtitle.
+    // Assert the branch that applies; home_headline_test pins each one.
+    if (find.textContaining('Best stretch today').evaluate().isNotEmpty) {
+      expect(find.textContaining(RegExp(r'^GOOD (MORNING|AFTERNOON|EVENING), SAM')), findsOneWidget);
+    } else {
+      expect(find.textContaining(RegExp(r'^Good (morning|afternoon|evening), Sam$')), findsOneWidget);
+    }
     expect(find.textContaining('BEHAVIOR'), findsWidgets);
     expect(find.textContaining('Start · ends'), findsOneWidget);
     expect(find.text('LOOK BACK'), findsOneWidget);

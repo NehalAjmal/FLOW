@@ -56,6 +56,7 @@ class _LoadingBlocksState extends State<LoadingBlocks> with SingleTickerProvider
 
   @override
   Widget build(BuildContext context) => Semantics(
+    container: true, // its own node: never merged into a neighbour's label
     label: widget.label,
     liveRegion: true,
     child: SizedBox(

@@ -21,6 +21,18 @@ class RecessPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    if (p.line) {
+      // Line: a value-holder is an outlined pill on the ground
+      final rr = RRect.fromRectAndRadius((Offset.zero & size).deflate(0.5), Radius.circular(math.min(size.height / 2, radius * 2 + 6)));
+      canvas.drawRRect(
+        rr,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = focused ? p.ink + 0.5 : p.ink
+          ..color = focused ? p.accent : p.text1,
+      );
+      return;
+    }
     final r = RRect.fromRectAndRadius(Offset.zero & size, Radius.circular(radius));
     canvas.drawRRect(r, Paint()..color = p.recess);
     canvas.save();
@@ -137,6 +149,19 @@ class KnobPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) => paintAt(canvas, size.center(Offset.zero));
 
   void paintAt(Canvas canvas, Offset c) {
+    if (p.line) {
+      canvas.drawCircle(c, radius, Paint()..color = p.bg);
+      canvas.drawCircle(
+        c,
+        radius,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = p.ink
+          ..color = p.text1,
+      );
+      canvas.drawCircle(c, radius * 0.3, Paint()..color = active ? p.accent : p.text1);
+      return;
+    }
     canvas.drawCircle(c.translate(0, 1.2), radius, Paint()..color = Faces.ground(p.raised).withValues(alpha: 0.5));
     canvas.drawCircle(c, radius, Paint()..color = p.raised);
     canvas.drawCircle(
@@ -226,6 +251,29 @@ class _TogglePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final r = RRect.fromRectAndRadius(Offset.zero & size, Radius.circular(size.height / 2));
     final on = t.clamp(0.0, 1.0);
+    if (p.line) {
+      // Line (the reference's pause switch): an outlined pill, a centre tick,
+      // and an ink dot that travels; on = the dot rests right, in verdigris.
+      final ink = enabled ? p.text1 : p.text3;
+      canvas.drawRRect(
+        r.deflate(0.5),
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = p.ink
+          ..color = ink,
+      );
+      canvas.drawLine(
+        Offset(size.width / 2, size.height * 0.3),
+        Offset(size.width / 2, size.height * 0.7),
+        Paint()
+          ..strokeWidth = 1
+          ..color = ink.withValues(alpha: 0.5),
+      );
+      final kr = size.height / 2 - 5;
+      final cx = kr + 5 + t * (size.width - 2 * (kr + 5));
+      canvas.drawCircle(Offset(cx, size.height / 2), kr, Paint()..color = Color.lerp(ink, p.accent, on)!);
+      return;
+    }
     canvas.drawRRect(r, Paint()..color = Color.lerp(p.recess, p.selected, on)!);
     canvas.drawRRect(
       r,
@@ -256,6 +304,24 @@ class PressedDot extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = FlowPalette.of(context);
+    if (p.line) {
+      return AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(color: p.text1, width: p.ink),
+        ),
+        alignment: Alignment.center,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          width: on ? size * 0.5 : 0,
+          height: on ? size * 0.5 : 0,
+          decoration: BoxDecoration(shape: BoxShape.circle, color: p.text1),
+        ),
+      );
+    }
     return AnimatedContainer(
       duration: const Duration(milliseconds: 160),
       width: size,

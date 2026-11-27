@@ -9,6 +9,7 @@ import 'package:window_manager/window_manager.dart';
 import 'package:windows_single_instance/windows_single_instance.dart';
 
 import 'desktop_host.dart';
+import 'quit_hooks.dart';
 
 bool get _desktop => (Platform.isWindows || Platform.isMacOS || Platform.isLinux) && !Platform.environment.containsKey('FLUTTER_TEST');
 
@@ -293,9 +294,25 @@ class NativeDesktopHost with WindowListener, TrayListener implements DesktopHost
 
   @override
   Future<void> quit() async {
-    await trayManager.destroy();
-    await windowManager.setPreventClose(false);
-    await windowManager.destroy();
+    _log('quit');
+    windowManager.removeListener(this);
+    trayManager.removeListener(this);
+    _snapDebounce?.cancel();
+    // gone from the screen at once; the rest happens out of sight
+    await _step('hide', () => windowManager.hide().timeout(const Duration(milliseconds: 300)));
+    // take the tray icon down first, or Windows leaves a ghost icon behind
+    await _step('tray destroy', () => trayManager.destroy().timeout(const Duration(milliseconds: 500)));
+    // the app's own teardown (main.dart disposes every provider), bounded
+    await runQuitHooks(limit: const Duration(milliseconds: 1500));
+    // let what that started land: socket closes, prefs writes in flight
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    // Then end the process outright. windowManager.destroy() only posts
+    // WM_QUIT and leaves the engine (and the single-instance pipe isolate)
+    // to be torn down after the message loop, which can hang on Windows with
+    // the window frozen as "Not responding". Nothing is lost: the session
+    // lives on the server, and anything that must run on the way out is a
+    // quit hook (quit_hooks.dart), awaited above within a bound.
+    exit(0);
   }
 
   @override
@@ -303,7 +320,10 @@ class NativeDesktopHost with WindowListener, TrayListener implements DesktopHost
 
   // ── listeners ──
   @override
-  void onWindowClose() => _onClose?.call();
+  void onWindowClose() {
+    _log('close requested');
+    _onClose?.call();
+  }
 
   /// Released after a drag: snap to the nearest corner (SNAP-like eased move).
   @override

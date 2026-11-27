@@ -39,11 +39,12 @@ flutter:
   uses-material-design: true
   assets:
     - assets/tray/
+    - assets/icon/
 
   # Type system (DESIGN_SPEC §type):
   #  OffBit 101 / Dot  — instrument voice: wordmark, big numbers, headlines (>= 20 px only).
   #  Sono              — UI and controls (OFL). SonoMono for small tabular numbers.
-  #  Cutive            — Flow's own notes: nudges, insights, guide, summaries (OFL).
+  #  Flow's own notes (nudges, insights, guide, summaries) are Sono too: Cutive is retired.
   fonts:
     - family: OffBit
       fonts:
@@ -71,6 +72,3 @@ flutter:
         - asset: assets/fonts/SonoMono-Regular.ttf
         - asset: assets/fonts/SonoMono-Medium.ttf
           weight: 500
-    - family: Cutive
-      fonts:
-        - asset: assets/fonts/Cutive-Regular.ttf
