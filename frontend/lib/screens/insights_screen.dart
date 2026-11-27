@@ -1,9 +1,11 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../tutorial/coach.dart';
 import '../api/models/day.dart';
 import '../api/models/insights.dart';
 import '../api/models/session.dart';
@@ -20,6 +22,7 @@ import '../ui/loading_blocks.dart';
 import '../ui/score/day_score.dart';
 import '../widgets/common.dart';
 import 'shell.dart' show FlowHeader;
+import '../ui/style_morph.dart';
 
 const _days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -58,7 +61,8 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
 
     return LayoutBuilder(
       builder: (context, viewport) {
-        final cardsH = (viewport.maxHeight * 0.34).clamp(220.0, 320.0);
+        // compact: the cards are a picker, the chosen day below is the reading
+        final cardsH = (viewport.maxHeight * 0.25).clamp(180.0, 236.0);
         return ListView(
           padding: const EdgeInsets.only(right: 24, bottom: 32),
           children: [
@@ -82,14 +86,17 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
             const SizedBox(height: 10),
             // ── DISPLAY: the week ──
             switch (week) {
-              AsyncData(:final value) => _WeekCards(
-                days: value,
-                selected: sel,
-                futureFrom: _weekOffset == 0 ? now.weekday : 7,
-                height: cardsH,
-                onSelect: (i) => setState(() => _dayIndex = i),
+              AsyncData(:final value) => CoachMark(
+                'week',
+                child: _WeekCards(
+                  days: value,
+                  selected: sel,
+                  futureFrom: _weekOffset == 0 ? now.weekday : 7,
+                  height: cardsH,
+                  onSelect: (i) => setState(() => _dayIndex = i),
+                ),
               ),
-              AsyncError(:final error) => Text(errorText(error)),
+              AsyncError(:final error) => InlineError(message: errorText(error), onRetry: () => ref.invalidate(weekTimelinesProvider(_weekStart))),
               _ => SizedBox(
                 height: cardsH,
                 child: Center(
@@ -106,8 +113,13 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // the chosen day against your usual, not a copy of Home's chart
                     SectionLabel(
-                      '${_days[sel]} ${days[sel].date.day} ${_months[days[sel].date.month - 1]} · ${flowDuration(days[sel].totals.focusMinutes)}',
+                      [
+                        '${_days[sel]} ${days[sel].date.day} ${_months[days[sel].date.month - 1]}',
+                        flowDuration(days[sel].totals.focusMinutes),
+                        ?vsUsual(days[sel].totals),
+                      ].join(' · '),
                     ),
                     const SizedBox(height: 6),
                     DayScore(
@@ -123,7 +135,7 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
             // ── WHAT FLOW LEARNED ──
             switch (patterns) {
               AsyncData(:final value) => _Learned(patterns: value, week: days),
-              AsyncError(:final error) => Text(errorText(error)),
+              AsyncError(:final error) => InlineError(message: errorText(error), onRetry: () => ref.invalidate(patternsProvider)),
               _ => const LoadingBlocks(height: 120),
             },
             const SizedBox(height: 26),
@@ -237,17 +249,29 @@ class _WeekCardsState extends State<_WeekCards> with TickerProviderStateMixin {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => MorphMark(
+    kind: MorphKind.rise,
+    child: RepaintBoundary(child: _morphBuild(context)),
+  );
+
+  Widget _morphBuild(BuildContext context) {
     final p = FlowPalette.of(context);
     final maxMin = widget.days.fold<int>(1, (a, d) => math.max(a, d.totals.focusMinutes));
     return LayoutBuilder(
       builder: (context, box) {
-        final slot = box.maxWidth / 7;
+        final edges = weekEdges(box.maxWidth, widget.futureFrom);
+        int at(double x) {
+          for (var i = 0; i < 7; i++) {
+            if (x < edges[i + 1]) return i;
+          }
+          return 6;
+        }
+
         return MouseRegion(
           // retarget only when the card under the pointer changes (not on
           // every mouse event), and arrive without overshoot
           onHover: (e) {
-            final i = (e.localPosition.dx / slot).floorToDouble().clamp(0.0, 6.0);
+            final i = at(e.localPosition.dx).toDouble();
             if (i == _hoverCard) return;
             // entering from outside: appear on the card, don't sweep in from afar
             if (_hoverCard == null) _hover.value = i;
@@ -259,7 +283,7 @@ class _WeekCardsState extends State<_WeekCards> with TickerProviderStateMixin {
             _hover.value = -10;
           },
           child: GestureDetector(
-            onTapUp: (e) => widget.onSelect((e.localPosition.dx / slot).floor().clamp(0, 6)),
+            onTapUp: (e) => widget.onSelect(at(e.localPosition.dx)),
             child: AnimatedBuilder(
               animation: Listenable.merge([_hover.animation, _rise, _sel.animation]),
               builder: (context, _) => CustomPaint(
@@ -282,6 +306,27 @@ class _WeekCardsState extends State<_WeekCards> with TickerProviderStateMixin {
       },
     );
   }
+}
+
+/// "40 min more than your usual", or null while Flow is still learning it.
+String? vsUsual(DayTotals t) {
+  final u = t.usualFocusMinutes;
+  if (u == null || u == 0) return null;
+  final d = t.focusMinutes - u;
+  if (d.abs() < 10) return 'about your usual';
+  return '${flowDuration(d.abs())} ${d > 0 ? 'more' : 'less'} than your usual';
+}
+
+/// Card edges across the week: days that happened (and today) get the room,
+/// days still ahead are narrow, since they only hold a plan.
+List<double> weekEdges(double width, int futureFrom) {
+  final weights = [for (var i = 0; i < 7; i++) i < futureFrom ? 1.4 : 0.6];
+  final total = weights.fold<double>(0, (a, b) => a + b);
+  final out = <double>[0];
+  for (final w in weights) {
+    out.add(out.last + width * w / total);
+  }
+  return out;
 }
 
 class _WeekPainter extends CustomPainter {
@@ -326,7 +371,7 @@ class _WeekPainter extends CustomPainter {
   @override
   void paint(Canvas c, Size s) {
     final floor = s.height - 46;
-    final slot = s.width / 7;
+    final edges = weekEdges(s.width, futureFrom);
     // fit every card to the hours this week actually used (≥ 6 h), so blocks
     // keep a readable width instead of thin towers on a 14 h axis
     var lo = 24, hi = 0;
@@ -359,13 +404,13 @@ class _WeekPainter extends CustomPainter {
       // continuous through zero: `sign` here made the hovered card itself
       // jump ±5 px whenever the hover point crossed its centre
       final part = hover < -5 ? 0.0 : (i - hover).clamp(-1.0, 1.0) * math.max(0.0, 1.6 - dist) * 3;
-      final cx = slot * i + slot / 2 + part;
-      final w = slot - 14;
+      final cx = (edges[i] + edges[i + 1]) / 2 + part;
+      final w = edges[i + 1] - edges[i] - 14;
       final cardH = floor - 10 - lift;
       final card = RRect.fromRectAndRadius(Rect.fromLTWH(cx - w / 2, floor - cardH, w, cardH), const Radius.circular(12));
       // a thin 3D edge under the card (it stands on the floor)
-      c.drawRRect(card.shift(const Offset(0, 2)), Paint()..color = Faces.ground(p.raised));
-      c.drawRRect(card, Paint()..color = future ? p.bg : p.raised);
+      if (!p.line) c.drawRRect(card.shift(const Offset(0, 2)), Paint()..color = Faces.ground(p.raised));
+      c.drawRRect(card, Paint()..color = future || p.line ? p.bg : p.raised);
       c.drawRRect(
         card,
         Paint()
@@ -386,7 +431,7 @@ class _WeekPainter extends CustomPainter {
           ..color = p.text3.withValues(alpha: 0.6)
           ..strokeWidth = 0.8,
       );
-      final maxH = inner.height * 0.5;
+      final maxH = math.max(8.0, inner.height - 44);
       for (final (k, sess) in d.sessions.indexed) {
         final x0 = x(sess.start) + 0.8, x1 = x(sess.end) - 0.8;
         if (x1 - x0 < 1) continue;
@@ -398,7 +443,7 @@ class _WeekPainter extends CustomPainter {
               Demand.moderate => 0.75,
               Demand.heavy => 1.0,
             };
-        final col = p.pastByDemand[sess.demand.index];
+        final col = p.pastModerate /* one stone: height already shows demand */;
         if (future || sess.state == TimelineSessionState.scheduled || sess.state == TimelineSessionState.forecast) {
           c.drawRect(
             Rect.fromLTRB(x0, base - h, x1, base),
@@ -433,8 +478,11 @@ class _WeekPainter extends CustomPainter {
       _t(c, '${d.date.day}', Offset(cx, floor + 30), size: 10, color: p.text3);
     }
     // one selection outline that slides to the chosen card
-    final sx = slot * selPos + slot / 2;
-    final sw = slot - 14;
+    final i0 = selPos.floor().clamp(0, 6), i1 = selPos.ceil().clamp(0, 6), f = selPos - selPos.floor();
+    double mid(int i) => (edges[i] + edges[i + 1]) / 2;
+    double wid(int i) => edges[i + 1] - edges[i] - 14;
+    final sx = mid(i0) + (mid(i1) - mid(i0)) * f;
+    final sw = wid(i0) + (wid(i1) - wid(i0)) * f;
     final near = selPos.round().clamp(0, 6);
     final nd = (near - hover).abs();
     final sh = floor - 10 - math.max(0.0, 1 - nd) * 10;
@@ -611,7 +659,12 @@ class _PeakBarsState extends State<_PeakBars> with TickerProviderStateMixin {
   }
 
   @override
-  Widget build(BuildContext context) => LayoutBuilder(
+  Widget build(BuildContext context) => MorphMark(
+    kind: MorphKind.rise,
+    child: RepaintBoundary(child: _morphBuild(context)),
+  );
+
+  Widget _morphBuild(BuildContext context) => LayoutBuilder(
     builder: (context, box) => MouseRegion(
       onHover: (e) {
         final h = (e.localPosition.dx / (box.maxWidth / 24)).floor().clamp(0, 23);
@@ -829,7 +882,12 @@ class _CyclePainter extends CustomPainter {
     final area = Path.from(path)
       ..lineTo(s.width, base)
       ..close();
-    if (learned) c.drawPath(area, Paint()..color = p.future.withValues(alpha: 0.16 * ((progress - 0.6) / 0.4).clamp(0.0, 1.0)));
+    final wash = ((progress - 0.6) / 0.4).clamp(0.0, 1.0);
+    if (learned && p.line) {
+      paintLineArea(c, area, Rect.fromLTRB(0, 0, s.width, base), p.future, opacity: wash);
+    } else if (learned) {
+      c.drawPath(area, Paint()..color = p.future.withValues(alpha: 0.16 * wash));
+    }
     // the line draws itself in from the left
     final drawn = Path();
     for (final m in path.computeMetrics()) {
@@ -905,14 +963,35 @@ class _SplitBar extends StatelessWidget {
           builder: (context, v, _) => FractionallySizedBox(
             alignment: Alignment.centerLeft,
             widthFactor: v,
-            child: DecoratedBox(
-              decoration: BoxDecoration(color: p.amber.withValues(alpha: 0.7), borderRadius: BorderRadius.circular(4)),
-            ),
+            child: p.line
+                ? CustomPaint(painter: _CombPainter(p.amber, p.ink))
+                : DecoratedBox(
+                    decoration: BoxDecoration(color: p.amber.withValues(alpha: 0.7), borderRadius: BorderRadius.circular(4)),
+                  ),
           ),
         ),
       ),
     );
   }
+}
+
+/// Line style fill: a close comb of hairlines in place of a solid bar.
+class _CombPainter extends CustomPainter {
+  _CombPainter(this.color, this.width);
+  final Color color;
+  final double width;
+  @override
+  void paint(Canvas c, Size s) {
+    final pen = Paint()
+      ..color = color
+      ..strokeWidth = width * 0.8;
+    for (var x = 1.2; x < s.width; x += 2.6) {
+      c.drawLine(Offset(x, 1.5), Offset(x, s.height - 1.5), pen);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_CombPainter o) => o.color != color || o.width != width;
 }
 
 // ── year heatmap ────────────────────────────────────────────────────────────
@@ -935,10 +1014,13 @@ class _YearBand extends ConsumerWidget {
             AsyncData(:final value) => LayoutBuilder(
               builder: (context, box) => SizedBox(
                 height: 18 + 7 * ((box.maxWidth - 26) / 53),
-                child: _Heatmap(minutes: value),
+                child: MorphMark(
+                  kind: MorphKind.chart,
+                  child: RepaintBoundary(child: _Heatmap(minutes: value)),
+                ),
               ),
             ),
-            AsyncError(:final error) => Text(errorText(error)),
+            AsyncError(:final error) => InlineError(message: errorText(error), onRetry: () => ref.invalidate(yearMinutesProvider)),
             _ => const LoadingBlocks(height: 100),
           },
         ],
@@ -1000,6 +1082,11 @@ class _HeatPainter extends CustomPainter {
   final Map<DateTime, int> minutes;
   final TextScaler scaler;
 
+  // A year of cells is ~400 shapes; hovering only moves one outline. Once the
+  // grid has grown in, it is recorded once and replayed under the hover.
+  static ui.Picture? _grid;
+  static Object? _gridKey;
+
   @override
   void paint(Canvas c, Size s) {
     final today = _d(DateTime.now());
@@ -1008,9 +1095,34 @@ class _HeatPainter extends CustomPainter {
     const left = 26.0;
     final cell = math.min((s.width - left) / weeks, (s.height - 18) / 7);
     final gap = cell * 0.18;
+    if (t >= 1e8) {
+      final key = (s, identityHashCode(minutes), p, scaler, today);
+      if (_gridKey != key || _grid == null) {
+        final rec = ui.PictureRecorder();
+        _cells(Canvas(rec), s, today, start, weeks, left, cell, gap);
+        _grid?.dispose();
+        _grid = rec.endRecording();
+        _gridKey = key;
+      }
+      c.drawPicture(_grid!);
+    } else {
+      _cells(c, s, today, start, weeks, left, cell, gap);
+    }
+    (Rect, DateTime, int)? hovered;
+    final hv = hover;
+    if (hv != null) {
+      final w = ((hv.dx - left) / cell).floor(), d = ((hv.dy - 16) / cell).floor();
+      final day = start.add(Duration(days: w * 7 + d));
+      if (w >= 0 && w < weeks && d >= 0 && d < 7 && !day.isAfter(today)) {
+        hovered = (Rect.fromLTWH(left + w * cell, 16 + d * cell, cell - gap, cell - gap), day, minutes[day] ?? 0);
+      }
+    }
+    _hover(c, s, hovered, cell);
+  }
+
+  void _cells(Canvas c, Size s, DateTime today, DateTime start, int weeks, double left, double cell, double gap) {
     final maxV = math.max(1, minutes.values.fold<int>(0, math.max));
     var lastMonth = -1;
-    (Rect, DateTime, int)? hovered;
     for (var w = 0; w < weeks; w++) {
       for (var d = 0; d < 7; d++) {
         final day = start.add(Duration(days: w * 7 + d));
@@ -1022,10 +1134,32 @@ class _HeatPainter extends CustomPainter {
         if (k <= 0.01) continue;
         final rect = Rect.fromCenter(center: full.center, width: full.width * k, height: full.height * k);
         final v = m / maxV;
-        final col = m == 0 ? p.recess : (v < 0.33 ? p.pastLight : (v < 0.66 ? p.pastModerate : p.pastHeavy));
-        c.drawRRect(RRect.fromRectAndRadius(rect, Radius.circular(cell * 0.18 * k)), Paint()..color = col);
-        final hv = hover;
-        if (hv != null && full.inflate(gap / 2).contains(hv)) hovered = (full, day, m);
+        if (p.line) {
+          // Line: each day is one upright stroke on a hairline base, its
+          // length the focus that day; an empty day is just the base. A year
+          // reads as a plotted trace instead of comb densities.
+          final ink = FlowPalette.lineColour ? p.lineData : p.text1;
+          c.drawLine(
+            Offset(rect.left + rect.width * 0.2, rect.bottom),
+            Offset(rect.right - rect.width * 0.2, rect.bottom),
+            Paint()
+              ..color = p.hairline
+              ..strokeWidth = 0.8,
+          );
+          if (m > 0) {
+            c.drawLine(
+              Offset(rect.center.dx, rect.bottom),
+              Offset(rect.center.dx, rect.bottom - rect.height * (0.15 + 0.85 * v)),
+              Paint()
+                ..color = ink
+                ..strokeWidth = 1.3 * p.ink
+                ..strokeCap = StrokeCap.round,
+            );
+          }
+        } else {
+          final col = m == 0 ? p.recess : (v < 0.33 ? p.pastLight : (v < 0.66 ? p.pastModerate : p.pastHeavy));
+          c.drawRRect(RRect.fromRectAndRadius(rect, Radius.circular(cell * 0.18 * k)), Paint()..color = col);
+        }
         if (day == today) {
           c.drawRRect(
             RRect.fromRectAndRadius(rect.inflate(1.2), Radius.circular(cell * 0.22)),
@@ -1054,6 +1188,9 @@ class _HeatPainter extends CustomPainter {
       )..layout();
       tp.paint(c, Offset(4, 16 + i * cell + (cell - gap - tp.height) / 2));
     }
+  }
+
+  void _hover(Canvas c, Size s, (Rect, DateTime, int)? hovered, double cell) {
     if (hovered case (final r, final day, final m)) {
       c.drawRRect(
         RRect.fromRectAndRadius(r.inflate(1.5), Radius.circular(cell * 0.25)),
@@ -1126,7 +1263,7 @@ class _HistoryRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = FlowPalette.of(context);
-    final col = p.pastByDemand[s.demand.index];
+    final col = p.pastModerate /* one stone: height already shows demand */;
     final frac = s.plannedMinutes == 0 ? 1.0 : (s.focusMinutes / s.plannedMinutes).clamp(0.0, 1.2);
     final start = TimeOfDay.fromDateTime(s.startedAt);
     return InkWell(

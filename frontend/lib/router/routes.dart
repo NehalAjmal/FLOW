@@ -35,11 +35,15 @@ abstract final class Routes {
   static String adminPerson(String id) => '/admin/people/${Uri.encodeComponent(id)}';
   static const export = '/export';
   static const feedback = '/feedback';
+  static const tasks = '/tasks';
+
+  /// The sign-up tutorial: a playable sandbox before Create account.
+  static const tutorial = '/tutorial';
 
   static String sessionEndFor(String id) => '$sessionEnd/${Uri.encodeComponent(id)}';
 
   /// Reachable while signed out.
-  static const public = {welcome, login, register, forgotPassword, resetPassword, verifyEmail, invite};
+  static const public = {welcome, login, register, tutorial, forgotPassword, resetPassword, verifyEmail, invite};
 
   /// Reachable while signed in even when required consent is missing.
   static const consentExempt = {consent, guide, privacy, verifyEmail};

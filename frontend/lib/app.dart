@@ -8,7 +8,9 @@ import 'dev/dev_panel.dart';
 import 'router/app_router.dart';
 import 'theme/input_kind.dart';
 import 'theme/scrolling.dart';
+import 'theme/style.dart';
 import 'theme/tokens.dart';
+import 'ui/blocks.dart' show LineInk;
 import 'ui/brand/launch_overlay.dart';
 import 'ui/theme_spread.dart';
 
@@ -53,11 +55,12 @@ class _FlowAppState extends ConsumerState<FlowApp> with WidgetsBindingObserver {
     final router = ref.watch(appRouterProvider);
     return ThemeSpread(
       brightness: wanted,
-      child: (context, applied, wrap) => MaterialApp.router(
+      style: ref.watch(flowStyleProvider),
+      child: (context, applied, style, wrap) => MaterialApp.router(
         title: 'Flow',
         debugShowCheckedModeBanner: false,
-        theme: buildTheme(Brightness.light),
-        darkTheme: buildTheme(Brightness.dark),
+        theme: buildTheme(Brightness.light, line: style == FlowStyle.line),
+        darkTheme: buildTheme(Brightness.dark, line: style == FlowStyle.line),
         themeMode: applied == Brightness.dark ? ThemeMode.dark : ThemeMode.light,
         // the spread is the animation: underneath, the theme changes at once
         themeAnimationDuration: Duration.zero,
@@ -65,6 +68,8 @@ class _FlowAppState extends ConsumerState<FlowApp> with WidgetsBindingObserver {
         scrollBehavior: const FlowScrollBehavior(),
         // kDevBuild is const: in release this branch and DevShell are compiled out.
         builder: (context, child) {
+          // painters that only receive a colour read the applied look from here
+          LineInk.use(FlowPalette.of(context));
           // Flow's type runs one step larger than platform defaults; the
           // person's own OS text size still multiplies on top.
           final mq = MediaQuery.of(context);

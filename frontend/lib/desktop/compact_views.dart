@@ -20,6 +20,7 @@ import '../widgets/common.dart';
 import 'desktop_host.dart';
 import 'nudge_takeover.dart';
 import 'window_controller.dart';
+import '../core/session_clock.dart';
 
 /// Wraps the whole app: in mini/card mode the router stays mounted but
 /// offstage (no state lost, its tickers paused), and the compact view
@@ -219,7 +220,7 @@ class MiniWidget extends ConsumerWidget {
     final win = ref.read(windowModeProvider.notifier);
     if (live == null) return const SizedBox.shrink();
     final s = live.session;
-    final elapsed = s.elapsedAt(now);
+    final elapsed = s.focusAt(now, ref.watch(pausedSinceProvider));
     final planned = Duration(minutes: s.plannedMinutes);
     final left = planned - elapsed;
     final frac = (elapsed.inSeconds / planned.inSeconds).clamp(0.0, 1.0);
@@ -402,7 +403,7 @@ class _SessionCard extends ConsumerWidget {
     final p = FlowPalette.of(context);
     final now = ref.watch(clockProvider).value ?? DateTime.now();
     final s = live.session;
-    final elapsed = s.elapsedAt(now);
+    final elapsed = s.focusAt(now, ref.watch(pausedSinceProvider));
     final planned = Duration(minutes: s.plannedMinutes);
     final left = planned - elapsed;
     final ctl = ref.read(liveSessionProvider.notifier);

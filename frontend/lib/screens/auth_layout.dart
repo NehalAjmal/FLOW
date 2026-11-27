@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../theme/motion.dart';
 import '../theme/tokens.dart';
+import '../ui/blocks.dart' show LineInk, paintLineBlock;
 import '../ui/brand/wordmark.dart';
 import '../ui/pressable.dart';
 
@@ -274,6 +275,7 @@ class _StagePainter extends CustomPainter {
   }
 
   void _solid(Canvas c, double x0, double w, double base, double h, double d, Color col) {
+    if (LineInk.on) return paintLineBlock(c, x0, x0 + w, base, h, d, col);
     final top = base - h;
     c.drawRect(Rect.fromLTRB(x0, top, x0 + w, base), Paint()..color = col);
     c.drawPath(
@@ -373,7 +375,7 @@ class AuthError extends StatelessWidget {
   }
 }
 
-/// Flow speaking (Cutive): notices like "you were signed out because…".
+/// Flow speaking: notices like "you were signed out because…".
 class AuthNote extends StatelessWidget {
   const AuthNote(this.message, {super.key});
   final String message;

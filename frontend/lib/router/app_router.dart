@@ -2,9 +2,11 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../tutorial/tutorial_screen.dart';
 import '../api/models/session.dart';
 import '../core/config.dart';
 import '../dev/kit_gallery.dart';
+import '../screens/tasks_screen.dart';
 import '../screens/account_screens.dart';
 import '../screens/auth_screens.dart';
 import '../screens/guide_screen.dart';
@@ -58,6 +60,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         ),
       GoRoute(path: Routes.welcome, builder: (_, _) => const WelcomeScreen()),
       GoRoute(path: Routes.login, builder: (_, _) => const LoginScreen()),
+      GoRoute(path: Routes.tutorial, builder: (_, _) => const TutorialScreen()),
       GoRoute(
         path: Routes.register,
         builder: (_, s) => RegisterScreen(inviteToken: s.uri.queryParameters['invite']),
@@ -111,6 +114,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           // Focus DNA lives in Insights now
           GoRoute(path: Routes.export, builder: (_, _) => const InsightsScreen()),
           GoRoute(path: Routes.feedback, builder: (_, _) => const FeedbackScreen()),
+          GoRoute(path: Routes.tasks, builder: (_, _) => const TasksScreen()),
         ],
       ),
     ],

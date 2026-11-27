@@ -9,7 +9,9 @@ import '../api/models/session.dart';
 import '../state/account_controllers.dart';
 import '../state/break_controller.dart';
 import '../state/session_controller.dart';
+import '../theme/style.dart';
 import 'desktop_host.dart';
+import '../core/session_clock.dart';
 
 final desktopHostProvider = Provider<DesktopHost>((ref) => createDesktopHost());
 
@@ -23,7 +25,11 @@ class DesktopPrefs {
     this.appearance = Appearance.system,
     this.lightFrom = 7 * 60,
     this.lightTo = 19 * 60,
+    this.style = FlowStyle.solid,
   });
+
+  /// Solid or Line (Settings › Appearance).
+  final FlowStyle style;
 
   /// Light, dark, this computer's setting, or by time of day.
   final Appearance appearance;
@@ -47,7 +53,9 @@ class DesktopPrefs {
     Appearance? appearance,
     int? lightFrom,
     int? lightTo,
+    FlowStyle? style,
   }) => DesktopPrefs(
+    style: style ?? this.style,
     autoMini: autoMini ?? this.autoMini,
     closeToTray: closeToTray ?? this.closeToTray,
     corner: corner ?? this.corner,
@@ -85,6 +93,7 @@ class DesktopPrefsController extends Notifier<DesktopPrefs> {
         appearance: Appearance.values.asNameMap()[sp.getString('${_k}appearance')] ?? Appearance.system,
         lightFrom: (sp.getInt('${_k}lightFrom') ?? 7 * 60).clamp(0, 24 * 60 - 1),
         lightTo: (sp.getInt('${_k}lightTo') ?? 19 * 60).clamp(0, 24 * 60),
+        style: FlowStyle.values.asNameMap()[sp.getString('${_k}style')] ?? FlowStyle.solid,
       );
     } catch (_) {
       // no storage (tests, private web): defaults are fine
@@ -105,6 +114,7 @@ class DesktopPrefsController extends Notifier<DesktopPrefs> {
       await sp.setString('${_k}appearance', next.appearance.name);
       await sp.setInt('${_k}lightFrom', next.lightFrom);
       await sp.setInt('${_k}lightTo', next.lightTo);
+      await sp.setString('${_k}style', next.style.name);
     } catch (_) {}
   }
 }
@@ -122,6 +132,9 @@ final _minuteOfDayProvider = StreamProvider.autoDispose<int>((ref) async* {
   yield now();
   yield* Stream<int>.periodic(const Duration(seconds: 30), (_) => now()).distinct();
 });
+
+/// Solid or Line, right now (Settings › Appearance).
+final flowStyleProvider = Provider<FlowStyle>((ref) => ref.watch(desktopPrefsProvider.select((p) => p.style)));
 
 /// The theme Flow uses right now (Settings › Appearance).
 final themeModeProvider = Provider<ThemeMode>((ref) {
@@ -278,7 +291,7 @@ class WindowModeController extends Notifier<WindowMode> {
     double? progress;
     String tip = 'Flow';
     if (s != null) {
-      final elapsed = s.session.elapsedAt(DateTime.now());
+      final elapsed = s.session.focusAt(DateTime.now(), ref.read(pausedSinceProvider));
       progress = (elapsed.inSeconds / (s.session.plannedMinutes * 60)).clamp(0.0, 1.0);
       tip = 'Flow · ${elapsed.inMinutes} of ${s.session.plannedMinutes} min · ${t.name}';
     }

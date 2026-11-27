@@ -27,6 +27,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'helpers.dart';
+import 'package:flow/ui/style_morph.dart';
+import 'package:flow/theme/style.dart';
 
 /// Regressions found on real Windows hardware:
 /// - the compact views live above the router's Navigator, so their tooltips
@@ -421,7 +423,7 @@ void settingsNavTests() {
       'Agent': 'Agent',
       'Sensors': 'Camera eye signal',
       'Window': 'Closing keeps Flow in the tray',
-      'Appearance': 'Light or dark, on this computer.',
+      'Appearance': 'Solid or Line, light or dark, on this computer.',
       'Quiet hours': 'Quiet hours',
       'Schedules': 'Schedules',
       'Breaks': 'Breaks',
@@ -650,6 +652,39 @@ void themeSpreadTests() {
     final lo = r.reduce(math.min), hi = r.reduce(math.max);
     expect(hi / lo, greaterThan(1.15), reason: 'wobble and tendrils');
     img.dispose();
+  });
+
+  testWidgets('changing the style transforms each marked element, and the page underneath is already Line', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final c = mockContainer(MockBackend(config: const MockConfig(latency: Duration.zero, tick: Duration(hours: 1))));
+    await tester.pumpWidget(UncontrolledProviderScope(container: c, child: const FlowApp()));
+    await tester.pump(const Duration(seconds: 5));
+    final spread = tester.state<ThemeSpreadState>(find.byType(ThemeSpread));
+    await c.read(desktopPrefsProvider.notifier).set(c.read(desktopPrefsProvider).copyWith(style: FlowStyle.line));
+    await tester.pump();
+    expect(spread.spreading, isTrue);
+    final painter = tester.widget<CustomPaint>(find.byWidgetPredicate((w) => w is CustomPaint && w.painter is MorphPainter)).painter! as MorphPainter;
+    expect(painter.toLine, isTrue);
+    expect(painter.regions.where((r) => r.kind == MorphKind.control), isNotEmpty, reason: 'buttons on the page are measured');
+    expect(FlowPalette.of(tester.element(find.byType(Scaffold).first)).line, isTrue, reason: 'underneath, the app is already Line');
+    for (var i = 0; i < 120; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(tester.takeException(), isNull);
+    expect(spread.spreading, isFalse);
+    // and back to Solid
+    await c.read(desktopPrefsProvider.notifier).set(c.read(desktopPrefsProvider).copyWith(style: FlowStyle.solid));
+    await tester.pump();
+    expect((tester.widget<CustomPaint>(find.byWidgetPredicate((w) => w is CustomPaint && w.painter is MorphPainter)).painter! as MorphPainter).toLine, isFalse);
+    await tester.pump(const Duration(seconds: 2));
+    expect(spread.spreading, isFalse);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    c.dispose();
+    await tester.pump(const Duration(seconds: 1));
   });
 
   testWidgets('changing the theme spreads: the old page is on top at first, gone at the end, and the app is dark underneath at once', (

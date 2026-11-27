@@ -378,7 +378,7 @@ Minimum window 960×640. Below ~1100 px wide, the deck's two groups stack vertic
 | Instrument | OffBit 101 (+Bold) | wordmark, big numbers, timers, headlines | 20 px and up only; ticking values use fixed digit cells (no tabular figures in the face) |
 | Not yet | OffBit Dot | scheduled times, countdown before a start | same skeleton as 101 (rule L in type) |
 | Controls | Sono (static instances) / SonoMono | buttons, labels, read-outs, chart labels | caps labels keep "Flow" as Flow |
-| Flow's notes | Cutive | nudges, insights, guide, summaries | set 1 px under UI size |
+| Flow's notes | Sono (Cutive retired) | nudges, insights, guide, summaries | 0.5 px under UI size, line height 1.55 |
 
 The product name is always **Flow** (capital F only), including inside caps labels.
 
@@ -401,7 +401,7 @@ The product name is always **Flow** (capital F only), including inside caps labe
 
 ## 18. Signed-out screens (built)
 
-- Left 42%: wordmark, a Cutive line, and a line with four stone blocks plus the **next** block as a dashed outline. Busy → the next block fills to ~70% (SETTLE); error → it drains back and stays an outline (no shake); success → it fills.
+- Left 42%: wordmark, one line in Flow's voice, and a line with four stone blocks plus the **next** block as a dashed outline. Busy → the next block fills to ~70% (SETTLE); error → it drains back and stays an outline (no shake); success → it fills.
 - Right: slim form, max 360 px. Hint-as-label recessed fields, full-width primary, underlined quiet links. Errors are one inline line.
 - 2-step: six recessed digit boxes over one real field (typing, paste and OS one-time-code autofill work); a complete code submits itself.
 - Under 820 px wide: the stage collapses to the wordmark above the form.
@@ -416,7 +416,7 @@ The product name is always **Flow** (capital F only), including inside caps labe
 - **Home deck:** the Start controls keep a fixed slim width so the dial sits near the middle of the deck; controls give way first when the window narrows.
 - **Welcome guide** (`/consent` for new users, `/guide` to replay) built: spring-driven horizontal steps, the consent step blocks Next and Skip until behavior sensing is granted, agent pairing with a dashed→solid connection line, nudge-style tiles with a live preview, a practice nudge (Why? bars rise), and the first-session dial. The real window → widget shrink in step 5 waits for the window work (task #4).
 - **Session screens** built: the full active view (the dial ring is the session; timer fitted to the face), a full-screen break (dashes drain in amber; lock mode = slide to override with rubber band, confirm ≥ 90%), welcome-back rating dots, and a summary whose display is the session's own axis (focus blocks with 10-min seams, breaks as gaps, nudge ▼ and approach ticks).
-- **Nudge card** is one shared view (`NudgeCardView`): an OffBit head with an amber dot, the message in Cutive, Why? expanding in place with contribution bars, "More detail" for the full table.
+- **Nudge card** is one shared view (`NudgeCardView`): an OffBit head with an amber dot, the message in Flow's voice (Sono), Why? expanding in place with contribution bars, "More detail" for the full table.
 
 ## 20. Colour: subtle washes (built; ultramarine and slate tried and rejected)
 
@@ -435,7 +435,7 @@ There is no loud second accent. Colour is atmosphere: several soft hues, each a 
 - Headlines are OffBit Bold.
 
 **Explaining functionality:**
-- `FeatureNote`: a numbered ring, a short title, one or two lines in Cutive.
+- `FeatureNote`: a numbered ring, a short title, one or two lines in Flow's voice.
 - Welcome: the stone field shows a sample nudge and three notes.
 - Guide: notes under steps 1 and 5.
 - Home: a "How to read this" toggle shows numbered captions.
@@ -484,7 +484,7 @@ The page fills the screen instead of a 720 px column.
 
 **Left: a sticky, full-height index.**
 - Each row is a section name with its current value underneath (Quiet · 5 min · Off · behavior only); the active row has a raised face and an ink bar.
-- At the bottom, "in one line": the whole setup as one Cutive sentence.
+- At the bottom, "in one line": the whole setup as one sentence in Flow's voice.
 
 **Right: one wash per section.** Each section has a title, Flow's one-line explanation, and controls next to a live preview.
 

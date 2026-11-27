@@ -9,7 +9,7 @@ typedef WhyBar = ({String name, double share});
 
 /// The nudge, as one presentational card (spec §3 nudge choreography).
 /// Used by the live intervention card and by the guide's preview/practice.
-/// Head in the instrument voice, message in Flow's own voice (Cutive).
+/// Head in the instrument voice, message in Flow's own voice.
 class NudgeCardView extends StatelessWidget {
   const NudgeCardView({
     super.key,

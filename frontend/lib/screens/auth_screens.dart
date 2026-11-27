@@ -70,7 +70,7 @@ class WelcomeScreen extends StatelessWidget {
         const SizedBox(height: 6),
         AuthPrimary(label: 'Sign in', onPressed: () => context.go(Routes.login)),
         Pressable(
-          onPressed: () => context.go(Routes.register),
+          onPressed: () => context.go(Routes.tutorial),
           padding: const EdgeInsets.symmetric(vertical: 10),
           child: const SizedBox(
             width: double.infinity,
@@ -213,7 +213,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       ],
       footer: [
         AuthLink('Forgot password?', onPressed: () => context.go(Routes.forgotPassword)),
-        AuthLink('Create an account', onPressed: () => context.go(Routes.register)),
+        AuthLink('Create an account', onPressed: () => context.go(Routes.tutorial)),
       ],
     );
   }
@@ -311,12 +311,13 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
       title: 'Create account',
       stage: _stage,
       form: [
-        Row(
+        // Wrap, not Row: at large text sizes the two choices stack instead of overflowing
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
           children: [
-            for (final (t, label) in const [(AccountType.solo, 'Just me'), (AccountType.employee, 'My team invited me')]) ...[
+            for (final (t, label) in const [(AccountType.solo, 'Just me'), (AccountType.employee, 'My team invited me')])
               Pressable(selected: _type == t, onPressed: () => setState(() => _type = t), child: Text(label)),
-              const SizedBox(width: 8),
-            ],
           ],
         ),
         const SizedBox(height: 4),

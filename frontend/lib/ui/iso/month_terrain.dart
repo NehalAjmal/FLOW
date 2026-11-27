@@ -7,6 +7,7 @@ import '../../theme/motion.dart';
 import '../../theme/tokens.dart';
 import '../blocks.dart';
 import 'iso.dart';
+import '../style_morph.dart';
 
 /// Month terrain (DESIGN_SPEC §6 deck "look back").
 ///
@@ -87,10 +88,13 @@ class _MonthTerrainState extends State<MonthTerrain> with TickerProviderStateMix
   }
 
   IsoCamera _cam() {
-    // fit the 7 × rows grid into the box
-    final s = math.min(widget.size.width / ((7 + _rows) * 0.7071 + 4.5), widget.size.height / ((7 + _rows) * 0.354 + 2.6));
-    final origin = Offset(_rows * 0.7071 * s + 6, widget.size.height * 0.24);
-    return IsoCamera(origin: origin, scale: s);
+    // Home's projection (front faces flat, depth up and to the right), so the
+    // terrain reads like the day blocks above it. This week is the front row,
+    // its weekday letters on the front edge; older weeks step back.
+    const r = Offset(0.55, -0.5);
+    final w = widget.size.width, h = widget.size.height;
+    final s = math.min((w - 16) / (7 + _rows * r.dx), (h - 34) / (_TerrainPainter.maxH + _rows * -r.dy + 0.2));
+    return IsoCamera.oblique(origin: Offset(_rows * r.dx * s + 8, _TerrainPainter.maxH * s + 10), scale: s, recede: r);
   }
 
   void _select(DateTime d) {
@@ -104,7 +108,9 @@ class _MonthTerrainState extends State<MonthTerrain> with TickerProviderStateMix
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => MorphMark(kind: MorphKind.rise, child: _morphBuild(context));
+
+  Widget _morphBuild(BuildContext context) {
     final p = FlowPalette.of(context);
     final maxMin = widget.minutes.values.fold<int>(0, math.max);
     return Semantics(
@@ -202,7 +208,8 @@ class _TerrainPainter extends CustomPainter {
   final Offset hover;
   final double lift;
 
-  static const maxH = 1.3; // world units for the tallest day
+  static const maxH = 1.5; // world units for the tallest day
+  static const inset = 0.22;
 
   @override
   void paint(Canvas c, Size size) {
@@ -234,7 +241,7 @@ class _TerrainPainter extends CustomPainter {
     final cells = <(int, int)>[
       for (var r = 0; r < rows; r++)
         for (var col = 0; col < 7; col++) (r, col),
-    ]..sort((a, b) => (a.$1 + a.$2).compareTo(b.$1 + b.$2));
+    ]..sort(cam.compareCells);
     for (final (r, col) in cells) {
       final d = dateAt(r, col);
       if (d == null) continue;
@@ -249,46 +256,42 @@ class _TerrainPainter extends CustomPainter {
       final hd = (Offset(col + 0.5, r + 0.5) - hover).distance;
       final full = maxH * (m / maxMin) + 0.35 * lift * falloff(hd, 2.2);
       final isSel = (r, col) == selected;
-      final ramp = m / maxMin;
-      final fill = isSel ? p.selected : (ramp < 0.4 ? p.pastLight : (ramp < 0.75 ? p.pastModerate : p.pastHeavy));
+      // one stone: height already says how much (colour is state only)
+      final fill = isSel ? p.selected : p.pastModerate;
       final oa = lf.outlineAlpha(t);
-      if (oa > 0) paintPillarOutline(c, cam, col.toDouble(), r.toDouble(), 1, full, p.text3.withValues(alpha: oa), inset: 0.17);
+      if (oa > 0) paintPillarOutline(c, cam, col.toDouble(), r.toDouble(), 1, full, p.text3.withValues(alpha: oa), inset: inset);
       if (lf.level > 0.002) {
-        paintPillar(
-          c,
-          cam,
-          col.toDouble(),
-          r.toDouble(),
-          1,
-          math.max(0.05, full * lf.level),
-          fill,
-          inset: 0.17,
-          ripple: lf.ripple,
-          phase: lf.phase,
-        );
+        paintPillar(c, cam, col.toDouble(), r.toDouble(), 1, math.max(0.05, full * lf.level), fill, inset: inset, ripple: lf.ripple, phase: lf.phase);
       }
     }
-    // labels outside the objects (Hairline rule 10)
+    // labels outside the objects (Hairline rule 10): weekdays along the
+    // front edge, read straight on; the scale under the last column
     const days = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
     for (var col = 0; col < 7; col++) {
-      final at = cam.project(col + 0.5, rows + 0.75);
+      final at = cam.project(col + 0.5, rows.toDouble()) + const Offset(0, 11);
       _t(c, days[col], at, col == selected.$2 ? p.text1 : p.text3);
     }
+    // the weeks, at the right end of each row: this week in front
+    for (var r = 0; r < rows; r++) {
+      final at = cam.project(7.0, r + 0.5) + const Offset(4, 0);
+      final back = rows - 1 - r;
+      _t(c, back == 0 ? 'this wk' : '$back wk ago', at, r == selected.$1 ? p.text1 : p.text3, left: true, size: 8.5);
+    }
     if (maxMin > 0) {
-      final at = cam.project(7.6, 0);
-      _t(c, 'TALLEST = ${maxMin ~/ 60} H ${(maxMin % 60).toString().padLeft(2, '0')}', at, p.text3, left: true);
+      final at = cam.project(7.0, rows.toDouble()) + const Offset(0, 24);
+      _t(c, 'TALLEST ${maxMin ~/ 60} H ${(maxMin % 60).toString().padLeft(2, '0')}', at, p.text3, right: true, size: 8.5);
     }
   }
 
-  void _t(Canvas c, String s, Offset at, Color color, {bool left = false}) {
+  void _t(Canvas c, String s, Offset at, Color color, {bool left = false, bool right = false, double size = 9.5}) {
     final tp = TextPainter(
       text: TextSpan(
         text: s,
-        style: TextStyle(fontFamily: FlowFonts.mono, fontSize: 9.5, color: color, letterSpacing: 1, fontFeatures: FlowType.tabular),
+        style: TextStyle(fontFamily: FlowFonts.mono, fontSize: size, color: color, letterSpacing: 1, fontFeatures: FlowType.tabular),
       ),
       textDirection: TextDirection.ltr,
     )..layout();
-    tp.paint(c, Offset(left ? at.dx : at.dx - tp.width / 2, at.dy - tp.height / 2));
+    tp.paint(c, Offset(left ? at.dx : (right ? at.dx - tp.width : at.dx - tp.width / 2), at.dy - tp.height / 2));
   }
 
   @override

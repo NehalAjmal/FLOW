@@ -22,6 +22,7 @@ import '../ui/kit.dart';
 import '../ui/loading_blocks.dart';
 import '../widgets/common.dart';
 import 'shell.dart' show FlowHeader;
+import '../ui/style_morph.dart';
 
 const _dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 String _pct(double v) => '${(v * 100).round()}';
@@ -75,11 +76,21 @@ class TeamScreen extends ConsumerWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const SectionLabel('Average focus'),
+                          const SectionLabel('Team focus, this week'),
                           const SizedBox(height: 10),
-                          Appear(child: TabularNumeral(_pct(value.data!.averageFocus), style: FlowType.numeral(p, 72))),
-                          const SizedBox(height: 4),
-                          Text('out of 100, this week', style: FlowType.chart(p, size: 11)),
+                          Builder(
+                            builder: (context) {
+                              final r = vsTeamUsual(value.data!.averageFocus, value.data!.trend);
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Appear(child: TabularNumeral(r.big, style: FlowType.numeral(p, 72))),
+                                  const SizedBox(height: 4),
+                                  Text(r.small, style: FlowType.chart(p, size: 11)),
+                                ],
+                              );
+                            },
+                          ),
                           const SizedBox(height: 22),
                           SizedBox(
                             height: (h - 300).clamp(150.0, 420.0),
@@ -189,12 +200,12 @@ class _EmptyGridPainter extends CustomPainter {
 }
 
 IsoCamera _weekCamera(Size s, {double depth = 4, double maxZ = 3}) {
-  // fit world x 0..7, y 0..depth, z 0..maxZ into the box
-  const c = 0.7071;
-  final scale = math.min(s.width / ((7 + depth) * c * 1.08), s.height / (((7 + depth) * c * 0.5 + maxZ) * 1.12));
-  final cx = (7 - depth) * c * scale / 2; // screen x of the footprint centre relative to origin
-  final top = maxZ * scale;
-  return IsoCamera(origin: Offset(s.width / 2 - cx, top + (s.height - top - (7 + depth) * c * 0.5 * scale) / 2), scale: scale);
+  // Home's projection: front faces flat, depth up and to the right. Fit world
+  // x 0..7, y 0..depth, z 0..maxZ into the box, with room for labels below.
+  const r = Offset(0.55, -0.5);
+  final scale = math.min(s.width / ((7 + depth * r.dx) * 1.06), (s.height - 26) / ((maxZ + depth * -r.dy) * 1.08));
+  final w = (7 + depth * r.dx) * scale, h = (maxZ + depth * -r.dy) * scale;
+  return IsoCamera.oblique(origin: Offset((s.width - w) / 2 + depth * r.dx * scale, (s.height - 26 - h) / 2 + maxZ * scale), scale: scale, recede: r);
 }
 
 /// The team's week as seven day pillars on a hairline floor (aggregate).
@@ -224,7 +235,12 @@ class _TeamWeekState extends State<_TeamWeek> with SingleTickerProviderStateMixi
   }
 
   @override
-  Widget build(BuildContext context) => LayoutBuilder(
+  Widget build(BuildContext context) => MorphMark(
+    kind: MorphKind.rise,
+    child: RepaintBoundary(child: _morphBuild(context)),
+  );
+
+  Widget _morphBuild(BuildContext context) => LayoutBuilder(
     builder: (context, box) {
       final cam = _weekCamera(box.biggest, depth: 1.6);
       return MouseRegion(
@@ -275,7 +291,7 @@ class _TeamWeekPainter extends CustomPainter {
       final full = 3.0 * v + (hover == i ? 0.25 : 0);
       final ti = t >= 1e8 ? 1e9 : t - i * 0.08;
       final lf = LiquidFill.at(ti, response: 0.75, outlineLead: 0.22, maxRipple: 0.08);
-      final col = v > 0.66 ? p.pastHeavy : (v > 0.45 ? p.pastModerate : p.pastLight);
+      final col = p.pastModerate; // one stone: height already says how much
       final oa = lf.outlineAlpha(ti);
       if (oa > 0) paintPillarOutline(c, cam, i.toDouble(), 0, 1, full, p.text3.withValues(alpha: oa), inset: 0.14);
       if (lf.level > 0.002) {
@@ -414,17 +430,21 @@ class _TrendPainter extends CustomPainter {
         ..color = p.text3
         ..strokeWidth = 1,
     );
-    for (final v in [0.5, 1.0]) {
+    // one guide: the team's own usual (mean of the earlier points), not a
+    // 50 / 100 scale. Calibrated to the team, never graded.
+    if (pts.length >= 4) {
+      final earlier = pts.sublist(0, pts.length - 1);
+      final usual = earlier.fold<double>(0, (a, b) => a + b.value) / earlier.length;
       for (var xx = left; xx < right; xx += 6) {
         c.drawLine(
-          Offset(xx, y(v)),
-          Offset(xx + 2, y(v)),
+          Offset(xx, y(usual)),
+          Offset(xx + 3, y(usual)),
           Paint()
-            ..color = p.hairline
-            ..strokeWidth = 0.8,
+            ..color = p.text3.withValues(alpha: 0.7)
+            ..strokeWidth = 0.9,
         );
       }
-      _t(c, _pct(v), Offset(s.width, y(v)), p.text3, right: true, size: 9.5);
+      _t(c, 'usual', Offset(s.width, y(usual)), p.text3, right: true, size: 9.5);
     }
     final line = Path()..moveTo(x(0), y(pts[0].value));
     for (var i = 1; i < pts.length; i++) {
@@ -438,19 +458,22 @@ class _TrendPainter extends CustomPainter {
       ..lineTo(x(pts.length - 1), base)
       ..lineTo(x(0), base)
       ..close();
-    c.drawPath(area, Paint()..color = p.pastModerate.withValues(alpha: 0.22 * progress));
+    if (p.line) {
+      paintLineArea(c, area, Rect.fromLTRB(left, top, right, base), p.lineData, opacity: progress);
+    } else {
+      c.drawPath(area, Paint()..color = p.pastModerate.withValues(alpha: 0.22 * progress));
+    }
     c.drawPath(
       drawn,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.6
+        ..strokeWidth = p.line ? 1.2 : 1.6
         ..strokeJoin = StrokeJoin.round
-        ..color = p.pastHeavy,
+        ..color = p.line ? p.text1 : p.pastHeavy,
     );
     if (progress >= 1) {
       final last = Offset(x(pts.length - 1), y(pts.last.value));
       c.drawCircle(last, 3.2, Paint()..color = p.selected);
-      _t(c, _pct(pts.last.value), last.translate(7, 0), p.text1, size: 11);
     }
     final h = hx;
     if (h != null && progress >= 1) {
@@ -592,7 +615,7 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
                     children: [
                       Row(
                         children: [
-                          const SectionLabel('Average focus'),
+                          const SectionLabel('Team focus over time'),
                           const Spacer(),
                           for (final (label, v) in const [('7 days', false), ('30 days', true)]) ...[
                             Pressable(
@@ -737,6 +760,38 @@ class _BandPainter extends CustomPainter {
   @override
   void paint(Canvas c, Size s) {
     final r = RRect.fromRectAndRadius(Offset.zero & s, const Radius.circular(6));
+    if (p.line) {
+      // thirds as comb densities; the last third is amber
+      final pen = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = p.ink * 0.9
+        ..color = p.text1;
+      c.save();
+      c.clipRRect(r);
+      for (var i = 0; i < 3; i++) {
+        final x0 = s.width * i / 3, x1 = math.min(s.width * (i + 1) / 3, s.width * v);
+        final gap = [6.0, 3.6, 2.6][i];
+        final comb = Paint()
+          ..color = (i == 2 ? p.amber : p.text1).withValues(alpha: 0.6)
+          ..strokeWidth = p.ink * 0.7;
+        for (var k = x0 + gap / 2; k < x1; k += gap) {
+          c.drawLine(Offset(k, 0), Offset(k, s.height), comb);
+        }
+      }
+      c.restore();
+      for (var i = 1; i < 3; i++) {
+        c.drawLine(Offset(s.width * i / 3, 0), Offset(s.width * i / 3, s.height), pen..color = p.hairline);
+      }
+      c.drawLine(
+        Offset(s.width * v, -3),
+        Offset(s.width * v, s.height + 3),
+        Paint()
+          ..color = p.text1
+          ..strokeWidth = p.ink * 1.4,
+      );
+      c.drawRRect(r, pen..color = p.text1);
+      return;
+    }
     c.drawRRect(r, Paint()..color = p.recess);
     c.save();
     c.clipRRect(r);
@@ -805,7 +860,19 @@ class _SpinePainter extends CustomPainter {
     double x(double h) => s.width * (h - h0) / (h1 - h0);
     final y = s.height * 0.45;
     final a = x(_h(start).clamp(h0, h1)), b = x(_h(end).clamp(h0, h1));
-    c.drawRRect(RRect.fromLTRBR(a, y - 10, b, y + 10, const Radius.circular(5)), Paint()..color = p.selected.withValues(alpha: 0.85));
+    final win = RRect.fromLTRBR(a, y - 10, b, y + 10, const Radius.circular(5));
+    if (p.line) {
+      c.drawRRect(win, Paint()..color = p.accent.withValues(alpha: 0.1));
+      c.drawRRect(
+        win,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = p.ink
+          ..color = p.accent,
+      );
+    } else {
+      c.drawRRect(win, Paint()..color = p.selected.withValues(alpha: 0.85));
+    }
     _t(c, '$start–$end', Offset((a + b) / 2, y - 20), p.text1);
     c.drawLine(
       Offset(0, y),
@@ -1211,11 +1278,19 @@ class _YouVsTeamPainter extends CustomPainter {
   void paint(Canvas c, Size s) {
     final top = math.max(math.max(mine, team), 1) * 1.15;
     final r = RRect.fromRectAndRadius(Offset.zero & s, const Radius.circular(3));
-    c.drawRRect(r, Paint()..color = p.recess);
-    c.drawRRect(
-      RRect.fromRectAndRadius(Rect.fromLTWH(0, 0, s.width * mine / top, s.height), const Radius.circular(3)),
-      Paint()..color = p.accent,
-    );
+    if (p.line) {
+      c.drawRRect(
+        r,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = p.ink * 0.9
+          ..color = p.hairline,
+      );
+      paintLineBar(c, Rect.fromLTWH(0, 0, s.width * mine / top, s.height), p.accent, strong: true, radius: 3);
+    } else {
+      c.drawRRect(r, Paint()..color = p.recess);
+      c.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(0, 0, s.width * mine / top, s.height), const Radius.circular(3)), Paint()..color = p.accent);
+    }
     final tx = s.width * team / top;
     c.drawLine(
       Offset(tx, -4),
@@ -1430,4 +1505,19 @@ class _Audit extends ConsumerWidget {
       ),
     );
   }
+}
+
+/// The team's week against the team's own usual, never as a grade out of
+/// 100 (calibrated to you, applied to the group). The usual is the mean of
+/// the earlier days in the trend; with fewer than three, Flow is still
+/// learning it.
+({String big, String small}) vsTeamUsual(double now, List<TrendPoint> trend) {
+  final earlier = trend.length > 1 ? trend.sublist(0, trend.length - 1) : const <TrendPoint>[];
+  if (earlier.length < 3) return (big: '—', small: "still learning the team's usual");
+  final usual = earlier.fold(0.0, (a, x) => a + x.value) / earlier.length;
+  if (usual <= 0) return (big: '—', small: "still learning the team's usual");
+  final d = (now - usual) / usual;
+  if (d.abs() < 0.03) return (big: '≈', small: "the team's usual");
+  final pct = (d.abs() * 100).round();
+  return (big: '${d > 0 ? '+' : '−'}$pct%', small: d > 0 ? "above the team's usual" : "below the team's usual");
 }
