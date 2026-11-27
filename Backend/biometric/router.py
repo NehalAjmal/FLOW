@@ -1,15 +1,3 @@
-# biometric/router.py
-#
-# Receives biometric readings from two sources:
-#   1. The ML friend's fatigue engine (EAR values from webcam)
-#   2. Apple Watch / rPPG (heart rate, HRV)
-#
-# Also reads from fatigue.json which the ML friend's main.py writes to,
-# so even if they don't call this endpoint, we can still pull their data.
-
-import uuid
-import json
-from pathlib import Path
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session as DBSession
@@ -20,11 +8,10 @@ from auth.dependencies import get_current_user
 from db_models.user import User
 from .schemas import BiometricIngestRequest, BiometricIngestResponse, LatestBiometricResponse
 
+from sessions.service import verify_session_ownership, current_camera
+from settings_app.service import feature_allowed
+
 router = APIRouter()
-
-# Path to the fatigue.json file the ML friend's engine writes
-_FATIGUE_JSON = Path(__file__).parent.parent / "ml_models" / "fatigue.json"
-
 
 def _compute_fatigue_signal(
     ear: Optional[float],
@@ -60,26 +47,6 @@ def _compute_fatigue_signal(
     return round(score / count, 3) if count > 0 else 0.5
 
 
-def _read_fatigue_json() -> Optional[dict]:
-    """
-    Read the latest entry from the fatigue.json snapshot.
-    Accepts either a single snapshot object or a list of snapshots
-    (returns the last entry of a list). Returns None if unavailable.
-    """
-    if not _FATIGUE_JSON.exists():
-        return None
-    try:
-        with open(_FATIGUE_JSON) as f:
-            data = json.load(f)
-        if isinstance(data, list) and data:
-            return data[-1]  # most recent entry
-        if isinstance(data, dict):
-            return data
-        return None
-    except Exception:
-        return None
-
-
 @router.post("/ingest", response_model=BiometricIngestResponse)
 def ingest_biometric(
     payload: BiometricIngestRequest,
@@ -90,6 +57,11 @@ def ingest_biometric(
     Receive a biometric reading from Apple Watch, rPPG, or the ML engine.
     Stores it in the DB and returns the computed fatigue signal.
     """
+    session = verify_session_ownership(db, payload.session_id, current_user.id)
+    if session.end_time is not None:
+        raise HTTPException(409, "Session ended")
+    if (payload.source != "apple_watch" or payload.ear_value is not None) and not feature_allowed(db, current_user.id, "camera"):
+        raise HTTPException(403, "camera_consent_required")
     fatigue_signal = _compute_fatigue_signal(
         ear=payload.ear_value,
         hr=payload.heart_rate_bpm,
@@ -124,11 +96,13 @@ def get_latest_biometric(
 ):
     """
     Returns the most recent biometric reading for a session.
-    First checks the DB, then falls back to reading fatigue.json directly
-    from the ML friend's engine output.
+    Checks user-owned database readings and session-specific camera metrics.
     """
+    session = verify_session_ownership(db, session_id, current_user.id) if session_id else None
     # Try DB first
     query = db.query(BiometricReading).filter(BiometricReading.user_id == current_user.id)
+    if not feature_allowed(db, current_user.id, "camera"):
+        query = query.filter(BiometricReading.source == "apple_watch", BiometricReading.ear_value.is_(None))
     if session_id:
         query = query.filter(BiometricReading.session_id == session_id)
 
@@ -149,41 +123,17 @@ def get_latest_biometric(
             source=reading.source,
         )
 
-    # Second: the in-process fatigue service (live webcam state, always freshest)
-    from ml_models.fatigue_model import fatigue_service
-
-    state = fatigue_service.get_state()
-    hr_live = state.get("heart_rate_bpm")
-    if state.get("ear") or state.get("fatigue_score") or hr_live:
-        return LatestBiometricResponse(
-            heart_rate_bpm=hr_live,
-            hrv_sdnn=None,
-            ear_value=state.get("ear"),
-            fatigue_signal=state.get("fatigue_score", 0.0),
-            has_data=True,
-            source="webcam",
-        )
-
-    # Third fallback: read fatigue.json from ML friend's engine
-    fatigue_data = _read_fatigue_json()
-    if fatigue_data:
-        ear = fatigue_data.get("ear_value") or fatigue_data.get("ear")
-        fatigue_score = fatigue_data.get("fatigue_score", 0.5)
-        return LatestBiometricResponse(
-            heart_rate_bpm=fatigue_data.get("heart_rate_bpm"),
-            hrv_sdnn=None,
-            ear_value=ear,
-            fatigue_signal=fatigue_score,
-            has_data=True,
-            source="ml_model",
-        )
+    state = current_camera(db, session) if session else {}
+    if any(state.get(k) is not None for k in ("ear", "fatigue_score", "heart_rate_bpm")):
+        return LatestBiometricResponse(heart_rate_bpm=state.get("heart_rate_bpm"), hrv_sdnn=None,
+            ear_value=state.get("ear"), fatigue_signal=state.get("fatigue_score"), has_data=True, source="webcam")
 
     # No data anywhere — honest defaults, never invented values
     return LatestBiometricResponse(
         heart_rate_bpm=None,
         hrv_sdnn=None,
         ear_value=None,
-        fatigue_signal=0.0,
+        fatigue_signal=None,
         has_data=False,
         source=None,
     )

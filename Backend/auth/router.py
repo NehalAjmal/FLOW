@@ -2,6 +2,7 @@ from typing import Optional
 from datetime import datetime, timedelta, timezone
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
@@ -24,8 +25,10 @@ from auth.utils import (
     SECRET_KEY, ALGORITHM,
 )
 from auth.totp import generate_totp_secret, verify_totp_code, get_otpauth_url
-from auth.dependencies import require_admin
+from auth.dependencies import require_admin, get_current_user, security
 from auth.rate_limit import login_rate_limiter
+from admin import invites as invite_service
+from consent.service import set_user_consent
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -84,7 +87,16 @@ def register_user(payload: RegisterRequest, db: Session = Depends(get_db)):
     if db.query(User).filter(User.email == payload.email).first():
         raise HTTPException(status_code=400, detail="Email is already registered")
 
-    role, team_id = _resolve_team(db, payload.account_type, payload.company_code, payload.admin_key)
+    invite = None
+    if payload.invite_token and payload.account_type in ("company_employee", "employee"):
+        # An invite link replaces the company code: it names the team itself.
+        try:
+            invite = invite_service.check(db, payload.invite_token)
+        except invite_service.InviteError as e:
+            raise HTTPException(status_code=400, detail=f"invite_{e.reason}")
+        role, team_id = "employee", invite.team_id
+    else:
+        role, team_id = _resolve_team(db, payload.account_type, payload.company_code, payload.admin_key)
 
     mfa_secret = generate_totp_secret() if role == "admin" else None
 
@@ -102,6 +114,12 @@ def register_user(payload: RegisterRequest, db: Session = Depends(get_db)):
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
+
+    if invite:
+        invite_service.mark_used(db, invite, new_user.id)
+        # The invite page showed exactly what the admin sees before they signed up,
+        # so joining through it is the "Share with my team" consent (contract, Admin: people).
+        set_user_consent(db, new_user.id, "team_aggregate", True)
 
     token = create_access_token(data={"sub": new_user.id, "role": new_user.role})
     refresh = _issue_refresh_token(db, new_user.id)
@@ -373,3 +391,37 @@ def setup_mfa(
         otpauth_url=url,
     )
 
+# ── /me ─────────────────────────────────────────────────────
+
+@router.get("/me", status_code=status.HTTP_200_OK)
+def get_my_profile(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        payload = jwt.decode(
+            credentials.credentials,
+            SECRET_KEY,
+            algorithms=[ALGORITHM],
+        )
+
+        # Temporary tokens must not grant profile access.
+        if payload.get("purpose") is not None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid access token",
+            )
+
+    except jwt.PyJWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired access token",
+        )
+
+    return {
+        "user_id": current_user.id,
+        "name": current_user.full_name,
+        "email": current_user.email,
+        "role": current_user.role,
+        "team_id": current_user.team_id,
+    }

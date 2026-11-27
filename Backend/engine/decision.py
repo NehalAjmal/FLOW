@@ -154,22 +154,27 @@ class DecisionEngine:
         }
 
 
-def compute_trough_pressure(
-    current_minute,
-    trough_minute,
-):
+def compute_trough_pressure(current_minute, trough_minute):
     if trough_minute <= 0:
         return 0.0
 
     distance = trough_minute - current_minute
 
+    # Stop penalizing focus after the predicted trough.
+    if distance < 0:
+        return 0.0
+
     if distance > 20:
         return 0.0
+
     elif distance > 10:
         return 0.3
+
     elif distance > 5:
         return 0.6
+
     elif distance > 0:
         return 0.9
+
     else:
         return 1.0

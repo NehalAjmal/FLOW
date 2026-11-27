@@ -46,7 +46,10 @@ async def generate_focus_dna(data: FocusDNARequest) -> FocusDNAResponse:
         insight = response.text.strip().strip('"').strip("'")
     except Exception:
         # If Gemini fails, use a data-driven fallback so the card still works
-        insight = f"Your peak window is {data.peak_hours[0]}:00 — protect that hour next week."
+        if data.peak_hours:
+            insight = f"Your peak window is {data.peak_hours[0]}:00, so protect that hour next week."
+        else:
+            insight = "Finish a few sessions this week so FLOW can find your peak window."
 
     # Format peak hours as readable strings e.g. ["9:00", "10:00", "14:00"]
     peak_hours_formatted = [f"{h}:00" for h in data.peak_hours]

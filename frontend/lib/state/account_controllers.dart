@@ -1,9 +1,26 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/api_connector.dart';
+import '../api/real/real_agent.dart';
 import '../api/models/consent.dart';
 import '../api/models/settings.dart';
 import 'auth_controller.dart';
+
+final sensorPrivacyHoldProvider =
+    NotifierProvider<SensorPrivacyHold, Set<ConsentScope>>(
+      SensorPrivacyHold.new,
+    );
+
+class SensorPrivacyHold extends Notifier<Set<ConsentScope>> {
+  @override
+  Set<ConsentScope> build() {
+    ref.watch(currentUserIdProvider);
+    return {};
+  }
+
+  void hold(ConsentScope scope) => state = {...state, scope};
+  void release(ConsentScope scope) => state = {...state}..remove(scope);
+}
 
 /// Requires a signed-in user; throws otherwise so screens never render stale
 /// data from a previous account.
@@ -25,11 +42,21 @@ class ConsentController extends AsyncNotifier<ConsentState> {
   /// Grant or withdraw one scope. Withdrawing also switches the matching
   /// feature off so settings never claim something consent forbids.
   Future<void> set(ConsentScope scope, bool granted) async {
+    final sensorScope =
+        scope == ConsentScope.behavior || scope == ConsentScope.camera;
+    if (sensorScope && !granted) {
+      ref.read(sensorPrivacyHoldProvider.notifier).hold(scope);
+    }
     final current = await future;
     final version = current.policyVersion ?? 'unversioned';
-    final entry = await ref.read(consentApiProvider).set(scope, granted: granted, policyVersion: version);
+    final entry = await ref
+        .read(consentApiProvider)
+        .set(scope, granted: granted, policyVersion: version);
     if (!ref.mounted) return;
     state = AsyncData(current.copyWithEntry(entry));
+    if (sensorScope && granted) {
+      ref.read(sensorPrivacyHoldProvider.notifier).release(scope);
+    }
 
     if (!granted) {
       final patch = switch (scope) {
@@ -39,7 +66,8 @@ class ConsentController extends AsyncNotifier<ConsentState> {
         _ => null,
       };
       if (patch != null) await ref.read(settingsProvider.notifier).patch(patch);
-      if (scope == ConsentScope.camera) {
+      if (scope == ConsentScope.camera &&
+          ref.read(localAgentApiProvider) is! RealLocalAgentApi) {
         try {
           await ref.read(localAgentApiProvider).setCamera(false);
         } catch (_) {}
@@ -48,7 +76,9 @@ class ConsentController extends AsyncNotifier<ConsentState> {
   }
 }
 
-final consentProvider = AsyncNotifierProvider<ConsentController, ConsentState>(ConsentController.new);
+final consentProvider = AsyncNotifierProvider<ConsentController, ConsentState>(
+  ConsentController.new,
+);
 
 // ── settings ───────────────────────────────────────────────────────────────
 
@@ -71,7 +101,9 @@ class SettingsController extends AsyncNotifier<UserSettings> {
   Future<void> patch(SettingsPatch patch) async {
     final consent = ref.read(consentProvider).value;
     void need(bool? enabling, ConsentScope s) {
-      if (enabling == true && !(consent?.granted(s) ?? false)) throw ConsentRequired(s);
+      if (enabling == true && !(consent?.granted(s) ?? false)) {
+        throw ConsentRequired(s);
+      }
     }
 
     need(patch.cameraEnabled, ConsentScope.camera);
@@ -79,23 +111,31 @@ class SettingsController extends AsyncNotifier<UserSettings> {
     need(patch.llmEnabled, ConsentScope.llm);
 
     final previous = state.value;
-    if (previous != null) state = AsyncData(patch.applyTo(previous)); // optimistic
+    if (previous != null && patch.cameraEnabled != true) {
+      state = AsyncData(patch.applyTo(previous));
+    }
     try {
       final saved = await ref.read(settingsApiProvider).update(patch);
       if (ref.mounted) state = AsyncData(saved);
-      if (patch.cameraEnabled != null) {
+      if (patch.cameraEnabled != null &&
+          ref.read(localAgentApiProvider) is! RealLocalAgentApi) {
         try {
           await ref.read(localAgentApiProvider).setCamera(patch.cameraEnabled!);
         } catch (_) {}
       }
     } catch (_) {
-      if (ref.mounted && previous != null) state = AsyncData(previous); // roll back
+      if (ref.mounted && previous != null && patch.cameraEnabled != false) {
+        state = AsyncData(previous);
+      }
       rethrow;
     }
   }
 }
 
-final settingsProvider = AsyncNotifierProvider<SettingsController, UserSettings>(SettingsController.new);
+final settingsProvider =
+    AsyncNotifierProvider<SettingsController, UserSettings>(
+      SettingsController.new,
+    );
 
 // ── global pause ───────────────────────────────────────────────────────────
 
@@ -122,4 +162,6 @@ class PauseController extends AsyncNotifier<PauseState> {
   }
 }
 
-final pauseProvider = AsyncNotifierProvider<PauseController, PauseState>(PauseController.new);
+final pauseProvider = AsyncNotifierProvider<PauseController, PauseState>(
+  PauseController.new,
+);

@@ -7,7 +7,7 @@ import json
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session as DBSession
-from pydantic import BaseModel
+from pydantic import BaseModel, AliasChoices, Field
 from typing import List
 
 from db_models.base import get_db
@@ -16,8 +16,9 @@ from db_models.user import User
 from db_models.session import Session as SessionModel
 from llm.client import get_gemini_client, get_model_name
 from llm.prompts import stuck_prompt
-from .schemas import StuckRequest, StuckResponse, StuckSuggestion
+from .schemas import CameraMetrics, ActivityCategoryRequest, StuckRequest, StuckResponse, StuckSuggestion
 from . import service
+from insights.service import learned_cycle
 
 router = APIRouter()
 
@@ -25,24 +26,43 @@ router = APIRouter()
 # ── Schemas for new endpoints ──────────────────────────────────────────────────
 
 class SessionStartRequest(BaseModel):
-    task_description: str
-    declared_difficulty: str   # light | moderate | heavy
-    planned_duration_min: int
+    task_description: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "task_description",
+            "task_text",
+            "task",
+        ),
+    )
 
+    declared_difficulty: str = Field(
+        validation_alias=AliasChoices(
+            "declared_difficulty",
+            "demand",
+        ),
+    )
 
+    planned_duration_min: int = Field(
+        validation_alias=AliasChoices(
+            "planned_duration_min",
+            "planned_minutes",
+        ),
+    )
+
+    share_task_with_llm: bool = False
 class SessionStartResponse(BaseModel):
     session_id: str
     message: str
 
 
-class SignalRequest(BaseModel):
+class SignalRequest(ActivityCategoryRequest):
     session_id: str
     keystroke_count: int
     window_switches: int
     idle_seconds: int
     mouse_distance_px: int
-    active_window: str
     timestamp: str
+    camera: Optional[CameraMetrics] = None
 
 
 class InterventionResponse(BaseModel):
@@ -98,8 +118,9 @@ def receive_signal(
         window_switches=payload.window_switches,
         idle_seconds=payload.idle_seconds,
         mouse_distance_px=payload.mouse_distance_px,
-        active_window=payload.active_window,
+        active_window=payload.app_category,
         timestamp=payload.timestamp,
+        camera=payload.camera,
     )
     if live is None:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -169,6 +190,21 @@ def end_session(
     )
     return result
 
+@router.post("/{session_id}/end")
+def end_session_by_id(
+    session_id: str,
+    db: DBSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return end_session(
+        payload=SessionEndRequest(
+            session_id=session_id,
+            self_rated_quality=None,
+        ),
+        db=db,
+        current_user=current_user,
+    )
+
 
 @router.get("/pre-check")
 def pre_check(
@@ -191,8 +227,8 @@ def pre_check(
 
     return {
         "recommendation": recommendation,
-        # learner exports ultradian_cycle_minutes; seeded demo data uses ultradian_period
-        "suggested_duration_min": int(params.get("ultradian_cycle_minutes") or params.get("ultradian_period") or 50),
+        # Your learned cycle once the learner really has one (3+ sessions), else a plain 50-minute suggestion.
+        "suggested_duration_min": int((learned_cycle(current_user) or {}).get("value") or 50),
         "warnings": [],   # calendar warnings added here once calendar_google is connected
     }
 
@@ -249,8 +285,8 @@ async def get_stuck_suggestions(
     Makes a live Gemini API call with full session context.
     Requires user auth and active 'llm' consent grant.
     """
-    from consent.service import has_consent
-    if not has_consent(db, current_user.id, "llm"):
+    from settings_app.service import feature_allowed
+    if not feature_allowed(db, current_user.id, "llm"):    # consent AND the Settings switch
         raise HTTPException(
             status_code=403,
             detail="llm_consent_required",
@@ -263,7 +299,7 @@ async def get_stuck_suggestions(
         task_declared=payload.task_declared,
         difficulty=payload.difficulty,
         stuck_duration_minutes=payload.stuck_duration_minutes,
-        active_window=payload.active_window,
+        active_window=payload.app_category,
         session_duration_minutes=payload.session_duration_minutes
     )
 

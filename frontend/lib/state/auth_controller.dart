@@ -5,6 +5,18 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../api/api_connector.dart';
 import '../api/api_error.dart';
 import '../api/models/auth.dart';
+import '../api/real/real_agent.dart';
+
+final sensorLogoutProvider = NotifierProvider<SensorLogout, bool>(
+  SensorLogout.new,
+);
+
+class SensorLogout extends Notifier<bool> {
+  @override
+  bool build() => false;
+  void block() => state = true;
+  void reset() => state = false;
+}
 
 sealed class AuthState {
   const AuthState();
@@ -37,7 +49,10 @@ class SignedIn extends AuthState {
 class AuthController extends Notifier<AuthState> {
   @override
   AuthState build() {
-    final sub = ref.watch(sessionExpiredProvider).stream.listen((_) => _expire());
+    final sub = ref
+        .watch(sessionExpiredProvider)
+        .stream
+        .listen((_) => _expire());
     ref.onDispose(sub.cancel);
     // Re-bootstrap if the dev panel swaps the auth implementation.
     ref.watch(authApiProvider);
@@ -60,7 +75,9 @@ class AuthController extends Notifier<AuthState> {
       if (e.isNetwork) {
         // Offline at launch: we can't verify the token. Show sign-in with a
         // clear reason rather than an app full of failing screens.
-        state = const SignedOut(message: "Can't reach Flow. Check your connection and sign in again.");
+        state = const SignedOut(
+          message: "Can't reach Flow. Check your connection and sign in again.",
+        );
       } else {
         await ref.read(tokenStoreProvider).clear();
         if (ref.mounted) state = const SignedOut();
@@ -69,6 +86,7 @@ class AuthController extends Notifier<AuthState> {
   }
 
   Future<void> _establish(TokenPair tokens) async {
+    ref.read(sensorLogoutProvider.notifier).reset();
     await ref.read(tokenStoreProvider).write(tokens);
     final me = await ref.read(authApiProvider).me();
     if (ref.mounted) state = SignedIn(me);
@@ -76,40 +94,71 @@ class AuthController extends Notifier<AuthState> {
 
   /// Throws [ApiError] on failure; the form shows `e.message`.
   Future<void> login({required String email, required String password}) async {
-    final res = await ref.read(authApiProvider).login(email: email.trim(), password: password);
+    final res = await ref
+        .read(authApiProvider)
+        .login(email: email.trim(), password: password);
     if (res.mfaRequired) {
       final token = res.mfaToken;
-      if (token == null) throw const ApiError(ApiError.badResponse, 'Server asked for MFA without a token.');
+      if (token == null) {
+        throw const ApiError(
+          ApiError.badResponse,
+          'Server asked for MFA without a token.',
+        );
+      }
       state = MfaRequired(mfaToken: token, email: email.trim());
       return;
     }
     final tokens = res.tokens;
-    if (tokens == null) throw const ApiError(ApiError.badResponse, 'Server did not return tokens.');
+    if (tokens == null) {
+      throw const ApiError(
+        ApiError.badResponse,
+        'Server did not return tokens.',
+      );
+    }
     await _establish(tokens);
   }
 
   Future<void> verifyMfa(String code) async {
     final s = state;
     if (s is! MfaRequired) throw StateError('No MFA challenge in progress');
-    final tokens = await ref.read(authApiProvider).verifyMfa(mfaToken: s.mfaToken, code: code.trim());
+    final tokens = await ref
+        .read(authApiProvider)
+        .verifyMfa(mfaToken: s.mfaToken, code: code.trim());
     await _establish(tokens);
   }
 
   void cancelMfa() => state = const SignedOut();
 
-  Future<RegisterResult> register(RegisterRequest req) => ref.read(authApiProvider).register(req);
+  Future<RegisterResult> register(RegisterRequest req) =>
+      ref.read(authApiProvider).register(req);
+
+  Future<void> _stopLocalSensors() async {
+    ref.read(sensorLogoutProvider.notifier).block();
+    final agent = ref.read(localAgentApiProvider);
+    if (agent is RealLocalAgentApi) {
+      try {
+        await agent.disconnect();
+      } catch (_) {}
+    }
+  }
 
   Future<void> logout() async {
+    await _stopLocalSensors();
+    if (!ref.mounted) return;
     final store = ref.read(tokenStoreProvider);
     final tokens = await store.read();
     // Logout must actually stop tracking (the old app claimed it did, but
     // didn't). End the running session first, best-effort.
     try {
       final active = await ref.read(sessionApiProvider).active();
-      if (active != null) await ref.read(sessionApiProvider).end(active.sessionId);
+      if (active != null) {
+        await ref.read(sessionApiProvider).end(active.sessionId);
+      }
     } catch (_) {}
     try {
-      if (tokens != null) await ref.read(authApiProvider).logout(tokens.refreshToken);
+      if (tokens != null) {
+        await ref.read(authApiProvider).logout(tokens.refreshToken);
+      }
     } catch (_) {
       // Revocation failing must not keep the user signed in locally.
     }
@@ -118,9 +167,13 @@ class AuthController extends Notifier<AuthState> {
   }
 
   Future<void> _expire() async {
+    await _stopLocalSensors();
+    if (!ref.mounted) return;
     await ref.read(tokenStoreProvider).clear();
     if (ref.mounted && state is! SignedOut) {
-      state = const SignedOut(message: 'Your session expired. Please sign in again.');
+      state = const SignedOut(
+        message: 'Your session expired. Please sign in again.',
+      );
     }
   }
 
@@ -131,7 +184,9 @@ class AuthController extends Notifier<AuthState> {
   }
 }
 
-final authProvider = NotifierProvider<AuthController, AuthState>(AuthController.new);
+final authProvider = NotifierProvider<AuthController, AuthState>(
+  AuthController.new,
+);
 
 /// The signed-in user, or null. Data providers watch this so they refetch on
 /// account switch and clear on sign-out.
@@ -140,4 +195,6 @@ final currentUserProvider = Provider<AuthUser?>((ref) {
   return s is SignedIn ? s.user : null;
 });
 
-final currentUserIdProvider = Provider<String?>((ref) => ref.watch(currentUserProvider)?.id);
+final currentUserIdProvider = Provider<String?>(
+  (ref) => ref.watch(currentUserProvider)?.id,
+);

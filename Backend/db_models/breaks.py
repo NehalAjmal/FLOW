@@ -28,6 +28,12 @@ class Break(Base):
 
     restoration_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0-1
 
+    # Added for Task 3 (break tracking). Existing databases: run migrations/add_break_columns.py
+    ended_at:           Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    intervention_id:    Mapped[Optional[str]]      = mapped_column(String(36), nullable=True)
+    resumption_lag_sec: Mapped[Optional[float]]    = mapped_column(Float, nullable=True)
+    resumption_source:  Mapped[Optional[str]]      = mapped_column(String(10), nullable=True)  # agent | log
+
     # Relationships
     session: Mapped["Session"] = relationship("Session", back_populates="breaks")
 

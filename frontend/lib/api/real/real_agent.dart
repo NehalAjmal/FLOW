@@ -8,59 +8,117 @@ import '../../core/json.dart';
 import '../contracts/agent_api.dart';
 import '../models/agent.dart';
 
-/// Talks to the local agent over JSON-on-WebSocket at [url].
-///
-/// Proposed wire protocol (see CONTRACT_NOTES.md), app → agent:
-///   {"type":"get_status"} | {"type":"pair","code":"123456"}
-///   {"type":"set_camera","on":true} | {"type":"watch_resumption","break_id":"…"}
-/// agent → app: `status`, `signals`, `resumption` events (see AgentEvent).
 class RealLocalAgentApi implements LocalAgentApi {
   RealLocalAgentApi(this.url);
-
   final String url;
   WebSocketChannel? _ch;
+  Future<WebSocketChannel?>? _opening;
   final _events = StreamController<AgentEvent>.broadcast();
-  AgentStatus _last = AgentStatus.offline;
+  Future<void> _queue = Future.value();
+  Completer<AgentStatus>? _reply;
+  int _generation = 0;
 
   Future<WebSocketChannel?> _connect() async {
     if (_ch != null) return _ch;
+    final pending = _opening;
+    if (pending != null) return pending;
+    final opening = _open(_generation);
+    _opening = opening;
+    try {
+      return await opening;
+    } finally {
+      if (identical(_opening, opening)) _opening = null;
+    }
+  }
+
+  Future<WebSocketChannel?> _open(int generation) async {
+    WebSocketChannel? candidate;
     try {
       final target = Uri.parse(url);
-      // activity data never leaves this computer
       if (EndpointPolicy.agentProblem(target) != null) return null;
       final ch = WebSocketChannel.connect(target);
+      candidate = ch;
       await ch.ready.timeout(const Duration(seconds: 2));
+      if (generation != _generation) {
+        await ch.sink.close();
+        return null;
+      }
+      // Consume the unsolicited initial status before sending any commands.
+      final initial = Completer<AgentStatus>();
+      _ch = ch;
       ch.stream.listen(
         (raw) {
+          if (!identical(_ch, ch)) return;
           try {
-            final e = AgentEvent.fromJson(asJson(jsonDecode(raw.toString())));
-            if (e is AgentStatusEvent) _last = e.status;
-            if (e != null) _events.add(e);
+            final event = AgentEvent.fromJson(
+              asJson(jsonDecode(raw.toString())),
+            );
+            if (event is AgentStatusEvent) {
+              if (!initial.isCompleted) {
+                initial.complete(event.status);
+              } else {
+                final reply = _reply;
+                if (reply != null && !reply.isCompleted) {
+                  reply.complete(event.status);
+                }
+              }
+            }
+            if (event != null) _events.add(event);
           } on FormatException {
-            // ignore malformed frames
+            /* Ignore malformed frames. */
           }
         },
-        onDone: _onClosed,
-        onError: (_) => _onClosed(),
+        onDone: () => _closed(ch),
+        onError: (Object _) => _closed(ch),
       );
-      _ch = ch;
-      return ch;
+      await initial.future.timeout(const Duration(seconds: 3));
+      return identical(_ch, ch) ? ch : null;
     } catch (_) {
-      _onClosed();
+      if (candidate != null) {
+        _closed(candidate);
+        unawaited(candidate.sink.close());
+      }
       return null;
     }
   }
 
-  void _onClosed() {
+  void _closed(WebSocketChannel ch) {
+    if (!identical(_ch, ch)) return;
     _ch = null;
-    _last = AgentStatus.offline;
+    final reply = _reply;
+    if (reply != null && !reply.isCompleted) {
+      reply.complete(AgentStatus.offline);
+    }
     _events.add(const AgentStatusEvent(AgentStatus.offline));
   }
 
-  Future<void> _send(Json msg) async {
-    final ch = await _connect();
-    if (ch == null) throw StateError('Flow agent is not running on this computer.');
-    ch.sink.add(jsonEncode(msg));
+  Future<AgentStatus> _command(Json message) {
+    final generation = _generation;
+    final operation = _queue.then((_) async {
+      if (generation != _generation) throw StateError('Agent disconnected.');
+      final ch = await _connect();
+      if (ch == null || generation != _generation) {
+        throw StateError('Flow agent unavailable.');
+      }
+      final reply = Completer<AgentStatus>();
+      _reply = reply;
+      try {
+        ch.sink.add(jsonEncode(message));
+        final status = await reply.future.timeout(const Duration(seconds: 8));
+        if (status.connection == AgentConnection.disconnected) {
+          throw StateError('Agent rejected command or disconnected.');
+        }
+        return status;
+      } catch (_) {
+        _closed(ch);
+        unawaited(ch.sink.close());
+        rethrow;
+      } finally {
+        _reply = null;
+      }
+    });
+    _queue = operation.then<void>((_) {}, onError: (Object _, StackTrace _) {});
+    return operation;
   }
 
   @override
@@ -71,23 +129,55 @@ class RealLocalAgentApi implements LocalAgentApi {
 
   @override
   Future<AgentStatus> status() async {
-    final ch = await _connect();
-    if (ch == null) return AgentStatus.offline;
-    final next = _events.stream
-        .where((e) => e is AgentStatusEvent)
-        .cast<AgentStatusEvent>()
-        .first
-        .timeout(const Duration(seconds: 2), onTimeout: () => AgentStatusEvent(_last));
-    ch.sink.add(jsonEncode({'type': 'get_status'}));
-    return (await next).status;
+    try {
+      return await _command({'type': 'get_status'});
+    } catch (_) {
+      return AgentStatus.offline;
+    }
   }
 
   @override
-  Future<void> pair(String code) => _send({'type': 'pair', 'code': code});
+  Future<void> pair(String code) async {
+    final status = await _command({'type': 'pair', 'code': code});
+    if (status.connection != AgentConnection.connected) {
+      throw StateError('Pairing failed.');
+    }
+  }
 
   @override
-  Future<void> setCamera(bool on) => _send({'type': 'set_camera', 'on': on});
+  Future<void> setCamera(bool on) async {
+    final status = await _command({'type': 'set_camera', 'on': on});
+    if (status.cameraOn != on) throw StateError('Camera command rejected.');
+  }
 
   @override
-  Future<void> watchResumption(String breakId) => _send({'type': 'watch_resumption', 'break_id': breakId});
+  Future<void> watchResumption(String breakId) async {
+    await _command({'type': 'watch_resumption', 'break_id': breakId});
+  }
+
+  Future<void> startSession(String sessionId) async {
+    final status = await _command({
+      'type': 'start_session',
+      'session_id': sessionId,
+    });
+    if (!status.behaviorOn || status.sessionId != sessionId) {
+      throw StateError('Session tracking rejected.');
+    }
+  }
+
+  Future<void> stopSession() async {
+    final status = await _command({'type': 'stop_session'});
+    if (status.behaviorOn || status.cameraOn) {
+      throw StateError('Sensor stop rejected.');
+    }
+  }
+
+  Future<void> disconnect() async {
+    _generation++;
+    final ch = _ch;
+    if (ch != null) {
+      _closed(ch);
+      await ch.sink.close();
+    }
+  }
 }

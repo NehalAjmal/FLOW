@@ -146,3 +146,13 @@ def test_score_bounds():
     )
 
     assert 0.0 <= result["focus_score"] <= 1.0
+
+def test_trough_pressure_stops_after_predicted_dip():
+    from engine.decision import compute_trough_pressure
+
+    assert compute_trough_pressure(44, 45) == 0.9
+    assert compute_trough_pressure(45, 45) == 1.0
+    assert compute_trough_pressure(46, 45) == 0.0
+    assert compute_trough_pressure(60, 45) == 0.0
+    assert compute_trough_pressure(90, 45) == 0.0
+    assert compute_trough_pressure(120, 45) == 0.0

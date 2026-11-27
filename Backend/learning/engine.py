@@ -62,7 +62,7 @@ class PatternLearner:
         for point in session_data:
             timestamps.append(_parse_ts(point.get("timestamp")))
             fatigue_vals.append(
-                point.get("output", {}).get("fatigue", 0.0)
+                point.get("output", {}).get("fatigue")
             )
             inp = point.get("input", {})
             keystrokes.append(inp.get("keystroke_count", 0))
@@ -73,6 +73,8 @@ class PatternLearner:
 
         # Hourly fatigue profile
         for t, f in zip(timestamps, fatigue_vals):
+            if not isinstance(f, (int, float)) or isinstance(f, bool) or not np.isfinite(f) or not 0 <= f <= 1:
+                continue
             hour = t.hour if t else datetime.utcnow().hour
             hourly_fatigue.setdefault(hour, []).append(f)
 
@@ -86,11 +88,18 @@ class PatternLearner:
         trough = self._compute_trough_minute(session_data, timestamps)
         trough_history.append(trough)
 
-        return self._export_model(
+        updated_model = self._export_model(
             hourly_fatigue, session_lengths,
             keystroke_history, switch_history, trough_history,
         )
 
+        # Preserve the user's adaptive intervention threshold.
+        if "adaptive_threshold" in prev_params:
+            updated_model["parameters"]["adaptive_threshold"] = (
+                prev_params["adaptive_threshold"]
+            )
+
+        return updated_model
     # ─────────────────────────────────────────────
     # SESSION DURATION
     # ─────────────────────────────────────────────
